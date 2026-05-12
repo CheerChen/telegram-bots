@@ -1,0 +1,14 @@
+{
+  "name": "telegram-bots",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "katakana:dev": "pnpm --filter katakana-bot dev",
+    "katakana:deploy": "pnpm --filter katakana-bot deploy"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "packageManager": "pnpm@11.1.0"
+}

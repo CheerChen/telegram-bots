@@ -1,0 +1,18 @@
+name = "katakana-bot"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[vars]
+# Your Telegram chat id — non-secret, fine to commit.
+ALLOWED_CHAT_ID = "6950532953"
+
+# KV cache for Jisho responses. Uncomment after running:
+#   pnpm wrangler kv namespace create JISHO_CACHE
+# and pasting the returned id below.
+# [[kv_namespaces]]
+# binding = "JISHO_CACHE"
+# id = ""
+
+# Secrets (set via `pnpm wrangler secret put <NAME>`):
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_WEBHOOK_SECRET
