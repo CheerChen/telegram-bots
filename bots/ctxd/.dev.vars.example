@@ -1,0 +1,17 @@
+# Local dev + push-to-prod source of truth.
+# Copy to .dev.vars (gitignored) and fill in.
+#
+# Push to Cloudflare:  pnpm secrets:push
+# Run locally:         pnpm dev
+
+# From @BotFather (new @cc_ctxd_bot)
+TELEGRAM_BOT_TOKEN=
+
+# Random string. Generate with: openssl rand -hex 32
+TELEGRAM_WEBHOOK_SECRET=
+
+# Aliyun DashScope API key. https://bailian.console.aliyun.com → API Key
+LLM_API_KEY=
+
+# Slack user token (xoxp-...). Same one your ctxd CLI uses.
+SLACK_USER_TOKEN=

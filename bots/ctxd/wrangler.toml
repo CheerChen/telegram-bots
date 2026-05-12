@@ -1,0 +1,23 @@
+name = "ctxd-bot"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[vars]
+ALLOWED_CHAT_ID = "6950532953"
+
+# Aliyun DashScope OpenAI-compatible endpoint (international).
+LLM_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+LLM_MODEL = "qwen3-coder-plus-2025-09-23"
+
+# KV for per-chat session state. Run once:
+#   pnpm wrangler kv namespace create CTXD_SESSIONS
+# then paste the returned id below and uncomment.
+[[kv_namespaces]]
+binding = "CTXD_SESSIONS"
+id = "5e5c6e5b16e04b609eb82e312c6cbd52"
+
+# Secrets (set via `pnpm secrets:push` after filling .dev.vars):
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_WEBHOOK_SECRET
+#   LLM_API_KEY            (DashScope API key)
+#   SLACK_USER_TOKEN       (xoxp-...)
