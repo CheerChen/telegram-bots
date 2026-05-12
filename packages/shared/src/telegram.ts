@@ -28,7 +28,11 @@ export interface EditMessageTextOptions {
   replyMarkup?: InlineKeyboardMarkup;
 }
 
-async function callApi(token: string, method: string, body: Record<string, unknown>): Promise<void> {
+async function callApi<T = unknown>(
+  token: string,
+  method: string,
+  body: Record<string, unknown>,
+): Promise<T> {
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -38,9 +42,14 @@ async function callApi(token: string, method: string, body: Record<string, unkno
     const detail = await res.text();
     throw new Error(`telegram ${method} ${res.status}: ${detail.slice(0, 200)}`);
   }
+  return (await res.json()) as T;
 }
 
-export async function sendMessage(token: string, opts: SendMessageOptions): Promise<void> {
+interface SendMessageResponse {
+  result?: { message_id: number };
+}
+
+export async function sendMessage(token: string, opts: SendMessageOptions): Promise<number> {
   const body: Record<string, unknown> = {
     chat_id: opts.chatId,
     text: opts.text,
@@ -49,7 +58,9 @@ export async function sendMessage(token: string, opts: SendMessageOptions): Prom
   if (opts.disableWebPagePreview) body.disable_web_page_preview = true;
   if (opts.parseMode) body.parse_mode = opts.parseMode;
   if (opts.replyMarkup) body.reply_markup = opts.replyMarkup;
-  await callApi(token, "sendMessage", body);
+  const json = await callApi<SendMessageResponse>(token, "sendMessage", body);
+  if (!json.result?.message_id) throw new Error("telegram sendMessage: no message_id");
+  return json.result.message_id;
 }
 
 export async function editMessageText(token: string, opts: EditMessageTextOptions): Promise<void> {

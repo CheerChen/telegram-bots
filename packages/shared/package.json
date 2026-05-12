@@ -6,7 +6,9 @@
   "exports": {
     "./telegram": "./src/telegram.ts",
     "./auth": "./src/auth.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./llm": "./src/llm.ts",
+    "./session": "./src/session.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251101.0",
