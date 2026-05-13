@@ -1,0 +1,34 @@
+name = "cc-katakana-line-bot"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[vars]
+# Soft cap on auto-registered private users. First N who DM the bot get in.
+MAX_CHATS = "50"
+
+# KV for user whitelist + counter. Create with:
+#   pnpm wrangler kv namespace create katakana-line-chats
+# then paste the returned id below.
+# [[kv_namespaces]]
+# binding = "CHATS"
+# id = ""
+
+# KV cache for jotoba lookups (shared schema with katakana telegram bot).
+# Create with:
+#   pnpm wrangler kv namespace create katakana-line-cache
+# Or, to share cache with the Telegram bot, paste that bot's id here.
+# [[kv_namespaces]]
+# binding = "KATAKANA_CACHE"
+# id = ""
+
+# Secrets (set via `pnpm wrangler secret put <NAME>`):
+#   LINE_CHANNEL_ACCESS_TOKEN
+#   LINE_CHANNEL_SECRET
+
+[[kv_namespaces]]
+binding = "CHATS"
+id = "fbc15de0fcde4735b400af22fe525880"
+
+[[kv_namespaces]]
+binding = "KATAKANA_CACHE"
+id = "8e39b0db867d45fe8c7297dad1162d19"
