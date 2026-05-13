@@ -1,5 +1,5 @@
-import { escapeHtml } from "shared/telegram";
 import sc2jp from "./sc2jp.json";
+import { escapeHtml } from "./telegram.ts";
 
 interface JotobaReading {
   kana?: string;
@@ -22,14 +22,19 @@ interface JotobaResponse {
   words?: JotobaWord[];
 }
 
-interface Result {
+export interface Sense {
+  pos: string;
+  def: string;
+}
+
+export interface Entry {
   reading: string;
   word?: string;
-  definition: string;
+  senses: Sense[];
 }
 
 export type LookupResult =
-  | { kind: "ok"; html: string }
+  | { kind: "ok"; entry: Entry }
   | { kind: "notfound"; query: string }
   | { kind: "error"; query: string; reason: string };
 
@@ -38,6 +43,7 @@ const KATAKANA_RE = /[ァ-ヺー-ヿ]/g;
 const STRIP_RE = /[・\s]/g;
 const MAX_LEN = 4000;
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const CACHE_PREFIX = "q2:";
 
 const mapping = sc2jp as Record<string, string | string[]>;
 
@@ -83,12 +89,16 @@ function posLabels(pos: unknown[] | undefined): string {
   return labels.join(", ");
 }
 
-function formatSenseHtml(sense: JotobaSense | undefined): string {
-  if (!sense) return "";
-  const pos = posLabels(sense.pos);
-  const def = sense.glosses.join("; ");
-  if (!pos) return escapeHtml(def);
-  return `<i>[${escapeHtml(pos)}]</i> ${escapeHtml(def)}`;
+function toEntry(w: JotobaWord, readingOverride?: string): Entry {
+  const reading = readingOverride ?? w.reading.kana!;
+  return {
+    reading,
+    word: w.reading.kanji,
+    senses: w.senses.slice(0, 2).map((s) => ({
+      pos: posLabels(s.pos),
+      def: s.glosses.join("; "),
+    })),
+  };
 }
 
 async function jotobaSearch(query: string): Promise<JotobaWord[]> {
@@ -96,18 +106,19 @@ async function jotobaSearch(query: string): Promise<JotobaWord[]> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ query, language: "English", no_english: false }),
+    signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) throw new Error(`jotoba ${res.status}`);
   const json = (await res.json()) as JotobaResponse;
   return json.words ?? [];
 }
 
-async function lookupKanji(query: string): Promise<Result[]> {
+async function lookupKanji(query: string): Promise<Entry[]> {
   const candidates = simplifiedToJapaneseCandidates(query);
   const queries = Array.from(new Set([...candidates, query]));
   const exactCandidates = new Set(candidates);
 
-  const results: Result[] = [];
+  const entries: Entry[] = [];
   const seen = new Set<string>();
 
   for (const q of queries) {
@@ -128,15 +139,14 @@ async function lookupKanji(query: string): Promise<Result[]> {
       if (seen.has(key)) continue;
       seen.add(key);
 
-      const definition = w.senses.slice(0, 2).map(formatSenseHtml).filter(Boolean).join(" | ");
-      results.push({ reading, word, definition });
+      entries.push(toEntry(w));
     }
   }
 
-  results.sort((a, b) => {
+  entries.sort((a, b) => {
     return Number(!exactCandidates.has(a.word ?? "")) - Number(!exactCandidates.has(b.word ?? ""));
   });
-  return results;
+  return entries;
 }
 
 function isExactKatakanaMatch(w: JotobaWord, query: string): boolean {
@@ -147,14 +157,14 @@ function isExactKatakanaMatch(w: JotobaWord, query: string): boolean {
   return defs.some((d) => d.toLowerCase() === q || d.toLowerCase().startsWith(q));
 }
 
-async function lookupEnglish(query: string): Promise<Result[]> {
+async function lookupEnglish(query: string): Promise<Entry[]> {
   const data = await jotobaSearch(query);
 
   const sorted = [...data].sort((a, b) => {
     return Number(!isExactKatakanaMatch(a, query)) - Number(!isExactKatakanaMatch(b, query));
   });
 
-  const results: Result[] = [];
+  const entries: Entry[] = [];
   const seen = new Set<string>();
   for (const w of sorted) {
     const reading = w.reading.kana;
@@ -162,30 +172,46 @@ async function lookupEnglish(query: string): Promise<Result[]> {
     if (!isKatakanaReading(reading)) continue;
     if (seen.has(reading)) continue;
     seen.add(reading);
-    results.push({ reading, definition: formatSenseHtml(w.senses[0]) });
+    entries.push(toEntry(w, reading));
   }
-  return results;
+  return entries;
 }
 
-function renderHtml(r: Result): string {
-  const reading = escapeHtml(r.reading);
-  const head = r.word ? `<code>${reading}</code>（${escapeHtml(r.word)}）` : `<code>${reading}</code>`;
-  const html = r.definition ? `${head}\n${r.definition}` : head;
+export function renderHtml(entry: Entry): string {
+  const reading = escapeHtml(entry.reading);
+  const head = entry.word
+    ? `<code>${reading}</code>（${escapeHtml(entry.word)}）`
+    : `<code>${reading}</code>`;
+  const senses = entry.senses
+    .map((s) => (s.pos ? `<i>[${escapeHtml(s.pos)}]</i> ${escapeHtml(s.def)}` : escapeHtml(s.def)))
+    .filter(Boolean)
+    .join(" | ");
+  const html = senses ? `${head}\n${senses}` : head;
   return html.length > MAX_LEN ? `${html.slice(0, MAX_LEN - 15)}\n…(truncated)` : html;
+}
+
+export function renderPlain(entry: Entry): string {
+  const head = entry.word ? `${entry.reading}（${entry.word}）` : entry.reading;
+  const senses = entry.senses
+    .map((s) => (s.pos ? `[${s.pos}] ${s.def}` : s.def))
+    .filter(Boolean)
+    .join(" | ");
+  const text = senses ? `${head}\n${senses}` : head;
+  return text.length > MAX_LEN ? `${text.slice(0, MAX_LEN - 15)}\n…(truncated)` : text;
 }
 
 export async function lookup(query: string, cache?: KVNamespace): Promise<LookupResult> {
   if (!query) return { kind: "notfound", query };
 
-  const cacheKey = `q:${query}`;
+  const cacheKey = `${CACHE_PREFIX}${query}`;
   if (cache) {
     const cached = await cache.get(cacheKey);
     if (cached) return JSON.parse(cached) as LookupResult;
   }
 
-  let results: Result[];
+  let entries: Entry[];
   try {
-    results = isCjkInput(query) ? await lookupKanji(query) : await lookupEnglish(query);
+    entries = isCjkInput(query) ? await lookupKanji(query) : await lookupEnglish(query);
   } catch (e) {
     return {
       kind: "error",
@@ -195,9 +221,7 @@ export async function lookup(query: string, cache?: KVNamespace): Promise<Lookup
   }
 
   const result: LookupResult =
-    results.length === 0
-      ? { kind: "notfound", query }
-      : { kind: "ok", html: renderHtml(results[0]!) };
+    entries.length === 0 ? { kind: "notfound", query } : { kind: "ok", entry: entries[0]! };
 
   if (cache) {
     await cache.put(cacheKey, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS });

@@ -5,10 +5,12 @@
   "type": "module",
   "exports": {
     "./telegram": "./src/telegram.ts",
+    "./line": "./src/line.ts",
     "./auth": "./src/auth.ts",
     "./types": "./src/types.ts",
     "./llm": "./src/llm.ts",
-    "./session": "./src/session.ts"
+    "./session": "./src/session.ts",
+    "./jotoba": "./src/jotoba.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251101.0",

@@ -7,7 +7,7 @@ import {
   sendMessage,
 } from "shared/telegram";
 import type { TelegramUpdate } from "shared/types";
-import { lookup, type LookupResult } from "./jotoba.ts";
+import { lookup, type LookupResult, renderHtml } from "shared/jotoba";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -29,7 +29,7 @@ function retryKeyboard(query: string): InlineKeyboardMarkup {
 function renderResult(result: LookupResult): { text: string; keyboard: InlineKeyboardMarkup } {
   switch (result.kind) {
     case "ok":
-      return { text: result.html, keyboard: EMPTY_KEYBOARD };
+      return { text: renderHtml(result.entry), keyboard: EMPTY_KEYBOARD };
     case "notfound":
       return {
         text: `Not found: <code>${escapeHtml(result.query)}</code>`,
