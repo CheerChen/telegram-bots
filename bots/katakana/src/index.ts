@@ -1,4 +1,4 @@
-import { isAllowedChat, verifyWebhookSecret } from "shared/auth";
+import { allowChatWithCap, verifyWebhookSecret } from "shared/auth";
 import {
   answerCallbackQuery,
   editMessageText,
@@ -7,28 +7,34 @@ import {
   sendMessage,
 } from "shared/telegram";
 import type { TelegramUpdate } from "shared/types";
-import { lookup, type LookupResult } from "./jisho.ts";
+import { lookup, type LookupResult } from "./jotoba.ts";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
-  ALLOWED_CHAT_ID: string;
+  MAX_CHATS: string;
+  CHATS: KVNamespace;
+  KATAKANA_CACHE: KVNamespace;
 }
 
 const RETRY_PREFIX = "retry:";
+const EMPTY_KEYBOARD: InlineKeyboardMarkup = { inline_keyboard: [] };
 
-function retryKeyboard(query: string): InlineKeyboardMarkup | undefined {
+function retryKeyboard(query: string): InlineKeyboardMarkup {
   const data = `${RETRY_PREFIX}${query}`;
-  if (new TextEncoder().encode(data).byteLength > 64) return undefined;
+  if (new TextEncoder().encode(data).byteLength > 64) return EMPTY_KEYBOARD;
   return { inline_keyboard: [[{ text: "🔄 Retry", callback_data: data }]] };
 }
 
-function renderResult(result: LookupResult): { text: string; keyboard?: InlineKeyboardMarkup } {
+function renderResult(result: LookupResult): { text: string; keyboard: InlineKeyboardMarkup } {
   switch (result.kind) {
     case "ok":
-      return { text: result.html };
+      return { text: result.html, keyboard: EMPTY_KEYBOARD };
     case "notfound":
-      return { text: `Not found: <code>${escapeHtml(result.query)}</code>` };
+      return {
+        text: `Not found: <code>${escapeHtml(result.query)}</code>`,
+        keyboard: EMPTY_KEYBOARD,
+      };
     case "error":
       return {
         text:
@@ -37,6 +43,11 @@ function renderResult(result: LookupResult): { text: string; keyboard?: InlineKe
         keyboard: retryKeyboard(result.query),
       };
   }
+}
+
+function loadingText(query: string, retry: boolean): string {
+  const verb = retry ? "Retrying" : "Looking up";
+  return `⏳ ${verb} <code>${escapeHtml(query)}</code>…`;
 }
 
 export default {
@@ -50,7 +61,8 @@ export default {
     }
 
     const update = (await req.json()) as TelegramUpdate;
-    if (!isAllowedChat(update, env.ALLOWED_CHAT_ID)) {
+    const maxChats = parseInt(env.MAX_CHATS, 10) || 50;
+    if (!(await allowChatWithCap(update, env.CHATS, maxChats))) {
       return new Response("ok");
     }
 
@@ -58,18 +70,32 @@ export default {
       const cb = update.callback_query;
       if (cb.data?.startsWith(RETRY_PREFIX) && cb.message) {
         const query = cb.data.slice(RETRY_PREFIX.length);
-        const result = await lookup(query);
+        const chatId = cb.message.chat.id;
+        const messageId = cb.message.message_id;
+
+        await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cb.id);
+        await editMessageText(env.TELEGRAM_BOT_TOKEN, {
+          chatId,
+          messageId,
+          text: loadingText(query, true),
+          parseMode: "HTML",
+          disableWebPagePreview: true,
+          replyMarkup: EMPTY_KEYBOARD,
+        });
+
+        const result = await lookup(query, env.KATAKANA_CACHE);
         const { text, keyboard } = renderResult(result);
         await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-          chatId: cb.message.chat.id,
-          messageId: cb.message.message_id,
+          chatId,
+          messageId,
           text,
           parseMode: "HTML",
           disableWebPagePreview: true,
           replyMarkup: keyboard,
         });
+      } else {
+        await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cb.id);
       }
-      await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cb.id);
       return new Response("ok");
     }
 
@@ -77,13 +103,36 @@ export default {
     const text = msg?.text?.trim();
     if (!msg || !text) return new Response("ok");
 
-    const result = await lookup(text);
-    const { text: replyText, keyboard } = renderResult(result);
-    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+    if (text === "/start" || text === "/help") {
+      await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+        chatId: msg.chat.id,
+        text:
+          "👋 Send me a word and I'll return the Japanese reading.\n\n" +
+          "Examples:\n" +
+          "• <code>勉強</code> → べんきょう (study)\n" +
+          "• <code>computer</code> → コンピューター\n" +
+          "• <code>学习</code> → 学習（がくしゅう）\n\n" +
+          "If the lookup fails, tap 🔄 Retry on the error message.",
+        parseMode: "HTML",
+        disableWebPagePreview: true,
+      });
+      return new Response("ok");
+    }
+
+    const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
       chatId: msg.chat.id,
-      text: replyText,
-      disableWebPagePreview: true,
+      text: loadingText(text, false),
       parseMode: "HTML",
+    });
+
+    const result = await lookup(text, env.KATAKANA_CACHE);
+    const { text: replyText, keyboard } = renderResult(result);
+    await editMessageText(env.TELEGRAM_BOT_TOKEN, {
+      chatId: msg.chat.id,
+      messageId: progressId,
+      text: replyText,
+      parseMode: "HTML",
+      disableWebPagePreview: true,
       replyMarkup: keyboard,
     });
     return new Response("ok");

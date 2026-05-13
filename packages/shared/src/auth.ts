@@ -13,3 +13,26 @@ export function isAllowedChat(update: TelegramUpdate, allowedChatId: string): bo
     update.callback_query?.message?.chat.id;
   return chatId !== undefined && String(chatId) === allowedChatId;
 }
+
+export async function allowChatWithCap(
+  update: TelegramUpdate,
+  kv: KVNamespace,
+  maxChats: number,
+): Promise<boolean> {
+  const chat =
+    update.message?.chat ??
+    update.edited_message?.chat ??
+    update.callback_query?.message?.chat;
+  if (!chat || chat.type !== "private") return false;
+
+  const key = `chat:${chat.id}`;
+  if (await kv.get(key)) return true;
+
+  const countRaw = await kv.get("meta:count");
+  const count = countRaw ? parseInt(countRaw, 10) : 0;
+  if (count >= maxChats) return false;
+
+  await kv.put(key, "1");
+  await kv.put("meta:count", String(count + 1));
+  return true;
+}

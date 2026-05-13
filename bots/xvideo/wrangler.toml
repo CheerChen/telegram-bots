@@ -1,4 +1,4 @@
-name = "katakana-bot"
+name = "cc-xvideo-bot"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
@@ -11,12 +11,8 @@ MAX_CHATS = "50"
 # then paste the returned id below.
 [[kv_namespaces]]
 binding = "CHATS"
-id = "de08d0d43e084c91bee6850aaddabcfe"
+id = "59b6a45a209b49adadb4422eed004d1e"
 
 # Secrets (set via `pnpm wrangler secret put <NAME>`):
 #   TELEGRAM_BOT_TOKEN
 #   TELEGRAM_WEBHOOK_SECRET
-
-[[kv_namespaces]]
-binding = "KATAKANA_CACHE"
-id = "8d69b3522195498dabb8cf3dd2978eb2"
