@@ -71,8 +71,31 @@ export async function editMessageText(token: string, opts: EditMessageTextOption
   };
   if (opts.parseMode) body.parse_mode = opts.parseMode;
   if (opts.disableWebPagePreview) body.disable_web_page_preview = true;
-  if (opts.replyMarkup) body.reply_markup = opts.replyMarkup;
+  if (opts.replyMarkup !== undefined) body.reply_markup = opts.replyMarkup;
   await callApi(token, "editMessageText", body);
+}
+
+export interface SendVideoOptions {
+  chatId: number | string;
+  video: string;
+  caption?: string;
+  parseMode?: ParseMode;
+  replyToMessageId?: number;
+  supportsStreaming?: boolean;
+}
+
+export async function sendVideo(token: string, opts: SendVideoOptions): Promise<number> {
+  const body: Record<string, unknown> = {
+    chat_id: opts.chatId,
+    video: opts.video,
+  };
+  if (opts.caption) body.caption = opts.caption;
+  if (opts.parseMode) body.parse_mode = opts.parseMode;
+  if (opts.replyToMessageId !== undefined) body.reply_to_message_id = opts.replyToMessageId;
+  if (opts.supportsStreaming) body.supports_streaming = true;
+  const json = await callApi<SendMessageResponse>(token, "sendVideo", body);
+  if (!json.result?.message_id) throw new Error("telegram sendVideo: no message_id");
+  return json.result.message_id;
 }
 
 export async function answerCallbackQuery(
