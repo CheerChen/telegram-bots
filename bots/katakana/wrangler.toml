@@ -16,6 +16,7 @@ id = "de08d0d43e084c91bee6850aaddabcfe"
 # Secrets (set via `pnpm wrangler secret put <NAME>`):
 #   TELEGRAM_BOT_TOKEN
 #   TELEGRAM_WEBHOOK_SECRET
+#   CLAW_WORKER_SECRET   shared with clawbot; gates POST /ilink (fails closed: 503 if unset)
 
 [[kv_namespaces]]
 binding = "KATAKANA_CACHE"

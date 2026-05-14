@@ -1,0 +1,17 @@
+{
+  "name": "ilink",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./protocol": "./src/protocol.ts",
+    "./token-store": "./src/token-store.ts",
+    "./auth": "./src/auth.ts",
+    "./poll": "./src/poll.ts",
+    "./types": "./src/types.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "typescript": "^5.6.0"
+  }
+}

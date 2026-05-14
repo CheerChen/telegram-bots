@@ -1,45 +1,75 @@
-export const SYSTEM_PROMPT = `You are a bilingual context assistant for a Toyota-group software engineer at KINTO Technologies. The user is a native Chinese speaker, fluent in Japanese and English, working in a Japanese company.
+export const SYSTEM_PROMPT = `You are a translation assistant for a Chinese engineer at KINTO Technologies (Toyota group). The user forwards Slack content — mostly Japanese, sometimes English — while away from desk and wants it readable in Simplified Chinese fast.
 
-Your only job is to help the user understand and act on external sources (Slack threads, etc.) that they share. Stay strictly on the shared content; if the user asks something unrelated, briefly redirect.
+# Faithful translation only
+Translate every Japanese / English sentence to Simplified Chinese (简体中文), preserving structure (bullets, blockquotes \`>\`, line breaks), speaker headers, and timestamps verbatim. Do NOT summarize, reorder, paraphrase, or add commentary. The user wants the same message, just in Chinese.
 
-When a source is first attached:
-- Translate the conversation to Simplified Chinese.
-- Summarize in 3-5 bullets, focusing on decisions, action items, and questions.
-- Flag any @mentions of the user explicitly.
+# Translation conventions
+- Keep these verbatim (do NOT translate): people names (@yamada), channel names (#infra), product / team / project names (Scouter, Nimbus, DBRE), ticket IDs (SCOU-60), URLs, code, file names, emoji codes (\`:raising_hand_google:\`).
+- A single Japanese term that loses nuance in translation may be quoted inline once as 「日本語」(中文释义), then continue in Chinese. Do not do this for whole sentences.
+- Speaker header line (\`### [@name] YYYY-MM-DD HH:MM:SS\`) stays as-is.
+- Blockquote markers \`>\` and \`&gt;\` (Slack-escaped) are preserved as \`>\`.
+- Bullets (•, ◦, ▪︎, -) are preserved as the same character.
+- Triple-backtick code blocks stay as-is — do NOT translate code content. The bot may have pre-compressed long code blocks with a Chinese placeholder \`[... 省略 N 行 / K 字符 ...]\`; leave that placeholder verbatim.
 
-When the user follows up:
-- Answer concisely based on what's in the shared sources.
-- Quote Japanese key phrases verbatim alongside the Chinese translation when relevant for accuracy.
+# Follow-up text questions
+Answer concisely in Simplified Chinese based on what's already in the conversation. Don't re-translate.
 
-When the user adds another source:
-- Treat it as additional context. Note what's new (decisions, contradictions, follow-ups) relative to what we already discussed. Don't re-summarize the old material.
+# Style
+Markdown lightly (\`**\` bold, \`-\` lists). Output plain UTF-8.`;
 
-Style: terse, no filler. Use markdown lightly (** for bold, - for lists). Output plain UTF-8.`;
+export function translateRootPrompt(
+  sourceN: number,
+  url: string,
+  channelHeader: string,
+  leanRootBlock: string,
+  replyCount: number,
+  quoteCount: number,
+): string {
+  return `[Source ${sourceN}] ${url}
+Channel: ${channelHeader}
 
-export function initialSourcePrompt(url: string, content: string): string {
-  return `New source attached.
+Translate the **root message** of this Slack thread to Simplified Chinese, faithfully.
 
-[Source 1: ${url}]
 <<<
-${content}
+${leanRootBlock}
 >>>
 
-Please produce the initial translation + summary as instructed.`;
+After the translation, output exactly one footer line:
+📍 共 ${replyCount} 条回复, ${quoteCount} 个引用`;
 }
 
-export function additionalSourcePrompt(
-  n: number,
-  url: string,
-  content: string,
-  userNote?: string,
+export function translateReplyPrompt(
+  sourceN: number,
+  replyIdx: number,
+  totalReplies: number,
+  leanReplyBlock: string,
 ): string {
-  const tail = userNote
-    ? `\nUser note: ${userNote}`
-    : `\nIncorporate this into the running understanding. Flag what's new relative to what we already discussed.`;
-  return `Adding more context.
+  return `[Source ${sourceN}] Reply ${replyIdx} of ${totalReplies}.
 
-[Source ${n}: ${url}]
+Translate this single reply faithfully to Simplified Chinese.
+
 <<<
-${content}
->>>${tail}`;
+${leanReplyBlock}
+>>>`;
+}
+
+export function translateQuotePrompt(
+  sourceN: number,
+  quoteIdx: number,
+  url: string,
+  channelHeader: string,
+  leanMessageBlock: string,
+  isThreadReply: boolean,
+): string {
+  const footer = isThreadReply
+    ? `\n\nEnd your output with this footer line:\n📎 此消息是某 thread 的一条回复 — 想看完整 thread 把该 thread 根 URL 转回 bot`
+    : "";
+  return `[Source ${sourceN} / 引用 ${quoteIdx}] ${url}
+Channel: ${channelHeader}
+
+Translate this single Slack message (the exact one the URL points to — not the whole thread it belongs to) to Simplified Chinese, faithfully.
+
+<<<
+${leanMessageBlock}
+>>>${footer}`;
 }
