@@ -7,7 +7,7 @@ import {
   sendMessage,
 } from "shared/telegram";
 import type { TelegramUpdate } from "shared/types";
-import { lookup, type LookupResult, renderHtml } from "shared/jotoba";
+import { lookup, type LookupResult, renderHtml, renderPlain } from "shared/jotoba";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -15,6 +15,23 @@ interface Env {
   MAX_CHATS: string;
   CHATS: KVNamespace;
   KATAKANA_CACHE: KVNamespace;
+  CLAW_WORKER_SECRET?: string;
+}
+
+interface IlinkRequest {
+  userId?: string;
+  text?: string;
+}
+
+function renderPlainResult(result: LookupResult): string {
+  switch (result.kind) {
+    case "ok":
+      return renderPlain(result.entry);
+    case "notfound":
+      return `Not found: ${result.query}`;
+    case "error":
+      return `Lookup failed: ${result.reason}`;
+  }
 }
 
 const RETRY_PREFIX = "retry:";
@@ -53,6 +70,21 @@ function loadingText(query: string, retry: boolean): string {
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
+
+    if (req.method === "POST" && url.pathname === "/ilink") {
+      if (!env.CLAW_WORKER_SECRET) return new Response("not configured", { status: 503 });
+      if (req.headers.get("x-claw-secret") !== env.CLAW_WORKER_SECRET) {
+        return new Response("forbidden", { status: 403 });
+      }
+      const body = (await req.json().catch(() => null)) as IlinkRequest | null;
+      const text = body?.text?.trim();
+      if (!text) {
+        return Response.json({ error: "missing text" }, { status: 400 });
+      }
+      const result = await lookup(text, env.KATAKANA_CACHE);
+      return Response.json({ text: renderPlainResult(result) });
+    }
+
     if (req.method !== "POST" || url.pathname !== "/webhook") {
       return new Response("katakana-bot", { status: 200 });
     }

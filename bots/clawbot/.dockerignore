@@ -1,0 +1,23 @@
+# Build context is the repo root, so this file lives at bots/clawbot/.dockerignore
+# but ignores apply relative to the context root.
+
+**/node_modules
+**/.wrangler
+**/.dev.vars
+**/dist
+**/.DS_Store
+**/*.log
+**/data
+**/.env
+**/.env.local
+.git
+.gitignore
+.github
+LICENSE
+README.md
+ref.md
+bots/clawbot/Makefile
+bots/clawbot/Makefile.local
+bots/clawbot/compose.yaml
+bots/clawbot/.dockerignore
+bots/clawbot/.env*

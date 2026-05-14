@@ -1,0 +1,32 @@
+# Local development compose — build + run on the Mac.
+# `image:` matches the registry path so `make build` produces a tag ready to push.
+# Pi deployments use compose.yaml (no build, pull from registry).
+
+services:
+  clawbot:
+    build:
+      context: ../..
+      dockerfile: bots/clawbot/Dockerfile
+      platforms:
+        - linux/arm64
+    image: ${REGISTRY_URL:-192.168.0.110:5000}/clawbot:${TAG:-latest}
+    container_name: clawbot-dev
+    restart: unless-stopped
+    environment:
+      CLAW_PORT: "8080"
+      CLAW_HOST: "0.0.0.0"
+      CLAW_DATA_DIR: /app/bots/clawbot/data
+      ILINK_BOT_TYPE: "${ILINK_BOT_TYPE:-3}"
+      CLAW_BOT_AGENT: "${CLAW_BOT_AGENT:-clawbot-dev/0.1.0}"
+      WORKER_URL_KATAKANA: "${WORKER_URL_KATAKANA:-}"
+      WORKER_URL_CTXD: "${WORKER_URL_CTXD:-}"
+      CLAW_WORKER_SECRET: "${CLAW_WORKER_SECRET:-}"
+    ports:
+      - "${CLAW_HOST_PORT:-8765}:8080"
+    volumes:
+      - ./data:/app/bots/clawbot/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

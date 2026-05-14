@@ -1,0 +1,28 @@
+# Deployment compose — pasted into Portainer's Stack editor on the Pi.
+# No `build:` block: Portainer pulls the image from the private registry.
+# For local Docker iteration, use compose.dev.yaml instead.
+
+services:
+  clawbot:
+    image: ${REGISTRY_URL:-192.168.0.110:5000}/clawbot:${TAG:-latest}
+    container_name: clawbot
+    restart: unless-stopped
+    environment:
+      CLAW_PORT: "8080"
+      CLAW_HOST: "0.0.0.0"
+      CLAW_DATA_DIR: /app/bots/clawbot/data
+      ILINK_BOT_TYPE: "${ILINK_BOT_TYPE:-3}"
+      CLAW_BOT_AGENT: "${CLAW_BOT_AGENT:-clawbot/0.1.0}"
+      WORKER_URL_KATAKANA: "${WORKER_URL_KATAKANA:-}"
+      WORKER_URL_CTXD: "${WORKER_URL_CTXD:-}"
+      CLAW_WORKER_SECRET: "${CLAW_WORKER_SECRET:-}"
+    ports:
+      - "${CLAW_HOST_PORT:-8765}:8080"
+    volumes:
+      # Pi 上请改成绝对路径，例如 /opt/clawbot/data
+      - /opt/clawbot/data:/app/bots/clawbot/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

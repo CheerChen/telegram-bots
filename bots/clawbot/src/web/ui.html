@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>clawbot</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1a1a1a;
+        --bg: #f6f6f6;
+        --card: #ffffff;
+        --muted: #6b6b6b;
+        --accent: #2a6df4;
+        --warn: #c75a00;
+        --err: #c0392b;
+        --ok: #138a36;
+        --border: #e2e2e2;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #f0f0f0;
+          --bg: #121212;
+          --card: #1f1f1f;
+          --muted: #9b9b9b;
+          --accent: #79a8ff;
+          --border: #303030;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        color: var(--fg);
+        background: var(--bg);
+        line-height: 1.5;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .badge {
+        font-size: 12px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--border);
+        color: var(--muted);
+        font-weight: normal;
+      }
+      .badge.running { background: rgba(19,138,54,0.15); color: var(--ok); }
+      .badge.authing { background: rgba(42,109,244,0.15); color: var(--accent); }
+      .badge.auth-required { background: rgba(199,90,0,0.15); color: var(--warn); }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        margin: 12px 0;
+      }
+      dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+      dt { color: var(--muted); font-size: 13px; }
+      dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; }
+      button {
+        font: inherit;
+        padding: 8px 16px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      input[type="text"] {
+        font: inherit;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--card);
+        color: var(--fg);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 4px;
+        width: 160px;
+      }
+      .qr-wrap {
+        text-align: center;
+        padding: 16px;
+        background: white;
+        border-radius: 8px;
+        margin: 16px 0;
+      }
+      .qr-wrap img { width: 240px; height: 240px; }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+      .muted { color: var(--muted); font-size: 13px; }
+      .err { color: var(--err); }
+      .ok { color: var(--ok); }
+      .warn { color: var(--warn); }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      table.handlers { border-collapse: collapse; font-size: 13px; width: 100%; }
+      table.handlers td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      table.handlers tr:last-child td { border-bottom: none; }
+      .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+      .dot.ok { background: var(--ok); }
+      .dot.off { background: var(--border); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>clawbot <span id="badge" class="badge">…</span></h1>
+      <div id="content" class="card"><span class="muted">loading…</span></div>
+      <p class="muted" style="margin-top:24px;font-size:12px;">
+        刷新间隔 <span id="interval">2s</span> · 局域网 only
+      </p>
+    </main>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const enc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+      const ZH_STATUS = {
+        wait: "等待扫描…",
+        scaned: "已扫描，请在手机上确认",
+        confirmed: "已确认",
+        expired: "二维码已过期",
+        scaned_but_redirect: "正在重定向…",
+        need_verifycode: "请输入手机微信显示的验证码",
+        verify_code_blocked: "验证码错误次数过多",
+        binded_redirect: "账号已绑定，复用本地 token",
+      };
+      const ZH_REASON = { initial: "首次授权", expired: "Session 过期", "manual-reset": "手动重置" };
+
+      let pollMs = 2000;
+      let inflight = false;
+      let lastQrAttempt = 0;
+
+      async function tick() {
+        if (inflight) return;
+        inflight = true;
+        try {
+          const res = await fetch("/api/status", { cache: "no-store" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const snap = await res.json();
+          render(snap);
+          pollMs = snap.status === "authing" ? 1500 : 4000;
+        } catch (e) {
+          $("content").innerHTML = `<span class="err">无法连接服务: ${enc(e.message)}</span>`;
+          pollMs = 3000;
+        } finally {
+          inflight = false;
+          $("interval").textContent = (pollMs / 1000).toFixed(1) + "s";
+          setTimeout(tick, pollMs);
+        }
+      }
+
+      function render(s) {
+        const badge = $("badge");
+        badge.className = "badge " + s.status;
+        badge.textContent = s.status;
+
+        if (s.status === "auth-required") renderAuthRequired(s);
+        else if (s.status === "authing") renderAuthing(s);
+        else if (s.status === "running") renderRunning(s);
+      }
+
+      function renderAuthRequired(s) {
+        const reason = ZH_REASON[s.authReason] || s.authReason || "";
+        $("content").innerHTML = `
+          <p>需要授权 <span class="muted">(${enc(reason)})</span></p>
+          ${s.authError ? `<p class="err"><code>${enc(s.authError)}</code></p>` : ""}
+          <div class="row">
+            <button id="start-btn" class="primary">开始扫码</button>
+          </div>
+        `;
+        $("start-btn").onclick = async () => {
+          $("start-btn").disabled = true;
+          const r = await fetch("/api/auth/start", { method: "POST" });
+          if (!r.ok) {
+            const e = await r.json().catch(() => ({}));
+            alert("启动失败: " + (e.error || r.status));
+            $("start-btn").disabled = false;
+          }
+        };
+      }
+
+      function renderAuthing(s) {
+        const statusText = ZH_STATUS[s.lastQrStatus] || s.lastQrStatus || "初始化…";
+        const qrV = s.qrAttempt || 0;
+        if (qrV !== lastQrAttempt) lastQrAttempt = qrV;
+
+        let inner = "";
+        if (s.qrcode) {
+          inner += `<div class="qr-wrap"><img src="/api/auth/qr.svg?v=${qrV}" alt="QR code" /></div>`;
+        }
+        inner += `<p>${enc(statusText)}</p>`;
+        if (s.needVerifyCode) {
+          inner += `
+            <div class="row">
+              <input id="code-input" type="text" maxlength="10" autofocus />
+              <button id="code-btn" class="primary">提交</button>
+            </div>
+          `;
+        }
+        inner += `
+          <div class="row">
+            <button id="cancel-btn">取消授权</button>
+          </div>
+        `;
+        $("content").innerHTML = inner;
+        if (s.needVerifyCode) {
+          const submit = async () => {
+            const code = $("code-input").value.trim();
+            if (!code) return;
+            $("code-btn").disabled = true;
+            const r = await fetch("/api/auth/code", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ code }),
+            });
+            if (!r.ok) {
+              const e = await r.json().catch(() => ({}));
+              alert("提交失败: " + (e.error || r.status));
+              $("code-btn").disabled = false;
+            }
+          };
+          $("code-btn").onclick = submit;
+          $("code-input").onkeydown = (e) => { if (e.key === "Enter") submit(); };
+        }
+        $("cancel-btn").onclick = () => fetch("/api/auth/cancel", { method: "POST" });
+      }
+
+      function renderRunning(s) {
+        const since = s.pollSince ? new Date(s.pollSince) : null;
+        const uptime = since ? humanDuration(Date.now() - since.getTime()) : "—";
+        const handlersHtml = renderHandlers(s.handlers || {});
+        $("content").innerHTML = `
+          <dl>
+            <dt>Bot ID</dt><dd>${enc(s.botUserId || "—")}</dd>
+            <dt>Uptime</dt><dd>${enc(uptime)}</dd>
+            <dt>Poll since</dt><dd>${enc(s.pollSince || "—")}</dd>
+            <dt>Last poll</dt><dd>${enc(s.lastPollAt || "—")}</dd>
+            ${s.lastPollError ? `<dt>Last error</dt><dd class="err">${enc(s.lastPollError)}</dd>` : ""}
+          </dl>
+          ${handlersHtml}
+        `;
+      }
+
+      function renderHandlers(handlers) {
+        const NAMES = ["katakana", "ctxd"];
+        const rows = NAMES.map((n) => {
+          const h = handlers[n] || { configured: false, invocations: 0 };
+          const dot = h.configured
+            ? '<span class="dot ok" title="configured"></span>'
+            : '<span class="dot off" title="not configured"></span>';
+          const used = h.lastInvokedAt ? relTime(h.lastInvokedAt) : "—";
+          const dur = h.lastDurationMs !== undefined ? ` (${h.lastDurationMs}ms)` : "";
+          const resultClass = h.lastResult === "error" ? "err" : "ok";
+          const result = h.lastResult
+            ? `<span class="${resultClass}">${enc(h.lastResult)}${enc(dur)}</span>`
+            : '<span class="muted">never used</span>';
+          const errBit = h.lastError ? `<div class="muted" style="font-size:11px;margin-top:2px;">${enc(h.lastError)}</div>` : "";
+          return `
+            <tr>
+              <td>${dot}</td>
+              <td><code>${enc(n)}</code></td>
+              <td>${h.invocations}×</td>
+              <td>${enc(used)}</td>
+              <td>${result}${errBit}</td>
+            </tr>
+          `;
+        }).join("");
+        return `
+          <div class="card">
+            <p style="margin:0 0 8px;font-weight:600;font-size:13px;">Handlers</p>
+            <table class="handlers"><tbody>${rows}</tbody></table>
+          </div>
+        `;
+      }
+
+      function relTime(iso) {
+        const ms = Date.now() - new Date(iso).getTime();
+        if (ms < 0) return "just now";
+        if (ms < 5_000) return "just now";
+        if (ms < 60_000) return Math.floor(ms / 1000) + "s ago";
+        if (ms < 3_600_000) return Math.floor(ms / 60_000) + "m ago";
+        if (ms < 86_400_000) return Math.floor(ms / 3_600_000) + "h ago";
+        return Math.floor(ms / 86_400_000) + "d ago";
+      }
+
+      function humanDuration(ms) {
+        if (ms < 0) return "0s";
+        const s = Math.floor(ms / 1000);
+        if (s < 60) return s + "s";
+        const m = Math.floor(s / 60);
+        if (m < 60) return m + "m " + (s % 60) + "s";
+        const h = Math.floor(m / 60);
+        if (h < 24) return h + "h " + (m % 60) + "m";
+        const d = Math.floor(h / 24);
+        return d + "d " + (h % 24) + "h";
+      }
+
+      tick();
+    </script>
+  </body>
+</html>
