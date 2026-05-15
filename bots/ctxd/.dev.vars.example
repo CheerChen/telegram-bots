@@ -18,3 +18,9 @@ SLACK_USER_TOKEN=
 
 # Shared secret for clawbot -> ctxd-bot /ilink calls.
 CLAW_WORKER_SECRET=
+
+# Atlassian (Jira & Confluence). Same creds for both.
+# https://id.atlassian.com/manage-profile/security/api-tokens
+ATLASSIAN_BASE_URL=
+ATLASSIAN_EMAIL=
+ATLASSIAN_API_TOKEN=

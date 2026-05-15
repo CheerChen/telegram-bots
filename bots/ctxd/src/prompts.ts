@@ -219,9 +219,31 @@ export const APPEND_SOURCE_INSTRUCTION = "我补充了新的上下文来源。�
  * appended to messages[] as a user turn. LLM never sees the shortcut number.
  */
 export const SHORTCUT_MAP: Record<string, string> = {
-  "1": "请列出需要我关注或行动的事项，按优先级排序。",
+  "1": "请更详细地分析这个讨论，包括各方观点、未解决的分歧和时间线。",
   "2": "请将上述对话内容翻译为中文。保留 URL、PR 编号、Jira key、代码、日志、人名。代码和日志不要逐行翻译，只给简短说明。",
   "3": "请帮我起草一个日语回复，提供三个版本：短め（casual）、丁寧（polite）、確認質問（question）。回复要自然，适合公司 Slack。",
 };
 
-export const MENU_TEXT = "还需要我做什么？\n1 提取行动项  2 翻译全文  3 起草回复\n或直接输入任何问题";
+/** Shortcut labels shown in disambiguation. */
+const SHORTCUT_LABELS: Record<string, string> = {
+  "1": "展开详情",
+  "2": "翻译全文",
+  "3": "起草回复",
+};
+
+/**
+ * Build a disambiguation prompt when user triggers a shortcut with multiple sources.
+ * Guides user to send natural language like "翻译来源1".
+ */
+export function buildSourceDisambiguation(
+  shortcut: string,
+  sources: SessionSource[],
+): string {
+  const label = SHORTCUT_LABELS[shortcut] ?? shortcut;
+  const list = sources
+    .map((s, i) => `来源${i + 1}: ${s.sourceType} — ${s.url}`)
+    .join("\n");
+  return `当前有多个来源：\n\n${list}\n\n请指定来源，例如「${label}来源1」。`;
+}
+
+export const MENU_TEXT = "还需要我做什么？\n1 展开详情  2 翻译全文  3 起草回复  0 重置\n或直接输入任何问题";

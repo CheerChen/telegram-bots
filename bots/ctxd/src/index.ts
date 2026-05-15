@@ -22,11 +22,12 @@ import {
   type Session,
   type SessionSource,
 } from "./cache.ts";
-import { fetchContext, UnsupportedSourceError } from "./ctxd.ts";
+import { fetchContext, type FetchContextEnv, UnsupportedSourceError } from "./ctxd.ts";
 import {
   APPEND_SOURCE_INSTRUCTION,
   buildActionPrompt,
   buildSessionSystemPrompt,
+  buildSourceDisambiguation,
   INITIAL_SUMMARY_INSTRUCTION,
   MENU_TEXT,
   SHORTCUT_MAP,
@@ -42,8 +43,21 @@ interface Env {
   LLM_API_KEY: string;
   LLM_MODEL: string;
   SLACK_USER_TOKEN: string;
+  ATLASSIAN_BASE_URL?: string;
+  ATLASSIAN_EMAIL?: string;
+  ATLASSIAN_API_TOKEN?: string;
   CTXD_SESSIONS: KVNamespace;
   CLAW_WORKER_SECRET?: string;
+}
+
+function fetchEnv(env: Env): FetchContextEnv {
+  return {
+    slackToken: env.SLACK_USER_TOKEN,
+    atlassianAuth:
+      env.ATLASSIAN_BASE_URL && env.ATLASSIAN_EMAIL && env.ATLASSIAN_API_TOKEN
+        ? { baseUrl: env.ATLASSIAN_BASE_URL, email: env.ATLASSIAN_EMAIL, apiToken: env.ATLASSIAN_API_TOKEN }
+        : undefined,
+  };
 }
 
 interface IlinkRequest {
@@ -64,8 +78,8 @@ const MAX_SESSION_CHARS = 200_000;
 const NO_CONTEXT_TEXT = "找不到上下文。请重新发送链接。";
 const READ_FAILED_TEXT = "链接读取失败。";
 const LLM_FAILED_TEXT = "处理失败。请再试一次。";
-const ONLY_SLACK_TEXT = "当前仅支持 Slack 链接。";
-const SEND_LINK_TEXT = "请发送 Slack 链接。";
+const ONLY_SLACK_TEXT = "不支持此链接类型。当前支持 Slack、Jira、Confluence。";
+const SEND_LINK_TEXT = "请发送 Slack / Jira / Confluence 链接。";
 const SESSION_TOO_LONG_TEXT = "对话过长。请发 0 重置或发送新链接开始新会话。";
 
 function truncateOutput(text: string): string {
@@ -108,7 +122,7 @@ async function resetLatestContext(
 }
 
 async function createContext(env: Env, url: string): Promise<CachedContext> {
-  const fetched = await fetchContext(env.SLACK_USER_TOKEN, url);
+  const fetched = await fetchContext(fetchEnv(env), url);
   const context: CachedContext = {
     id: newContextId(),
     url,
@@ -209,7 +223,7 @@ async function handleUserMessage(env: Env, chatId: number, rawText: string): Pro
   const text = rawText.trim();
 
   if (text === "/start" || text === "/help") {
-    return replyPlain(env, chatId, "发送 Slack 链接后，我会提供三个操作：总结、翻译、起草回复。");
+    return replyPlain(env, chatId, "发送 Slack / Jira / Confluence 链接，我会自动总结。之后可以继续追问或选择操作。");
   }
   if (text === "/reset" || text === "/new") {
     await resetLatestContext(env, TELEGRAM_SCOPE, chatId);
@@ -248,7 +262,7 @@ async function handleIlink(env: Env, req: Request): Promise<Response> {
   // Reset commands
   if (text === "/reset" || text === "/new" || text === "0") {
     await deleteSession(env.CTXD_SESSIONS, ILINK_SCOPE, userId);
-    return Response.json({ text: "已重置。请发送 Slack 链接开始新会话。" });
+    return Response.json({ text: "已重置。请发送链接开始新会话。" });
   }
 
   const { url, multiple } = extractFirstUrl(text);
@@ -259,7 +273,7 @@ async function handleIlink(env: Env, req: Request): Promise<Response> {
     let markdown: string;
     let sourceType: import("./url.ts").SourceType;
     try {
-      const fetched = await fetchContext(env.SLACK_USER_TOKEN, url);
+      const fetched = await fetchContext(fetchEnv(env), url);
       markdown = fetched.markdown;
       sourceType = fetched.sourceType;
     } catch (e) {
@@ -326,7 +340,16 @@ async function handleIlink(env: Env, req: Request): Promise<Response> {
     return Response.json({ text: SEND_LINK_TEXT });
   }
 
-  // Expand shortcut or pass through
+  // Multi-source disambiguation: shortcut + >1 source → guide user to specify
+  const isShortcut = text in SHORTCUT_MAP;
+  if (isShortcut && session.sources.length > 1) {
+    const disambiguationText = buildSourceDisambiguation(text, session.sources);
+    session.messages.push({ role: "assistant", content: disambiguationText });
+    await putSession(env.CTXD_SESSIONS, ILINK_SCOPE, userId, session);
+    return Response.json({ text: disambiguationText });
+  }
+
+  // Expand shortcut or pass through as-is (free-form goes straight to LLM)
   const userMessage = SHORTCUT_MAP[text] ?? text;
   session.messages.push({ role: "user", content: userMessage });
 
