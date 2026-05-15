@@ -26,8 +26,13 @@ export function detectSourceType(url: string): SourceType {
 
   if (host.endsWith("slack.com")) return "slack";
   if (host === "github.com" || host.endsWith(".github.com")) return "github";
-  if (host.endsWith("atlassian.net")) return "jira";
-  if (host.includes("confluence") || path.includes("confluence") || path.includes("wiki")) {
+  if (host.endsWith("atlassian.net")) {
+    // /wiki/ paths are Confluence; /browse/ paths are Jira
+    if (path.startsWith("/wiki/") || path.startsWith("/wiki")) return "confluence";
+    if (path.startsWith("/browse/")) return "jira";
+    return "jira"; // default for atlassian.net
+  }
+  if (host.includes("confluence") || path.includes("confluence")) {
     return "confluence";
   }
   return "unknown";

@@ -22,3 +22,6 @@ id = "5e5c6e5b16e04b609eb82e312c6cbd52"
 #   LLM_API_KEY            (DashScope API key)
 #   SLACK_USER_TOKEN       (xoxp-...)
 #   CLAW_WORKER_SECRET     (shared with clawbot for POST /ilink)
+#   ATLASSIAN_BASE_URL     (https://xxx.atlassian.net)
+#   ATLASSIAN_EMAIL        (your Atlassian account email)
+#   ATLASSIAN_API_TOKEN    (Atlassian API token — same creds for Jira & Confluence)
