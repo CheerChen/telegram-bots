@@ -1,7 +1,8 @@
 import { allowChatWithCap, verifyWebhookSecret } from "shared/auth";
+import { extractStatusId, fetchTweet } from "shared/fxtwitter";
 import { escapeHtml, sendMessage, sendVideo } from "shared/telegram";
 import type { TelegramUpdate } from "shared/types";
-import { extractStatusId, fetchTweet, probeTelegramVideoUrl } from "./fxtwitter.ts";
+import { isTelegramSendable, probeTelegramVideoUrl } from "./telegram-video.ts";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -86,7 +87,7 @@ export default {
     let sent = false;
     const best = candidates[0]!;
     for (const video of candidates) {
-      if (!video.telegramReady) continue;
+      if (!isTelegramSendable(video)) continue;
 
       const probe = await probeTelegramVideoUrl(video.url);
       if (!probe.ok) continue;

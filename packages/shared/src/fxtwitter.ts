@@ -27,17 +27,12 @@ interface FxVideoFormat {
   height?: number;
 }
 
-export interface VideoProbe {
-  ok: boolean;
-  reason?: string;
-}
-
-interface FxAuthor {
+export interface FxAuthor {
   name?: string;
   screen_name?: string;
 }
 
-interface FxTweet {
+export interface FxTweet {
   id: string;
   url?: string;
   text?: string;
@@ -61,15 +56,12 @@ export interface SelectedVideo {
   size?: number;
   bitrate?: number;
   container?: string;
-  telegramReady: boolean;
 }
 
 export type FetchResult =
   | { kind: "video"; candidates: SelectedVideo[]; tweet: FxTweet }
   | { kind: "novideo"; tweet: FxTweet }
   | { kind: "error"; reason: string };
-
-export const TELEGRAM_REMOTE_VIDEO_MAX_BYTES = 20 * 1024 * 1024;
 
 function isMp4Url(url: string): boolean {
   return /\.mp4(?:[?#]|$)/i.test(url);
@@ -80,15 +72,14 @@ function isM3u8Url(url: string): boolean {
 }
 
 function candidateScore(v: SelectedVideo): number {
-  return (v.bitrate ?? 0) * 100_000_000 + (v.height ?? 0) * 100_000 + (v.width ?? 0) * 100 + (v.size ?? 0);
+  return (
+    (v.bitrate ?? 0) * 100_000_000 +
+    (v.height ?? 0) * 100_000 +
+    (v.width ?? 0) * 100 +
+    (v.size ?? 0)
+  );
 }
 
-/**
- * Return all MP4 candidates sorted by quality (descending).
- * Candidates with known size ≤20MB are marked telegramReady.
- * Candidates with unknown size are optimistically marked telegramReady
- * (caller should probe to verify).
- */
 export function selectVideos(videos: FxVideo[]): SelectedVideo[] {
   const candidates: SelectedVideo[] = [];
 
@@ -106,11 +97,13 @@ export function selectVideos(videos: FxVideo[]): SelectedVideo[] {
         size: format.size,
         bitrate: format.bitrate,
         container: container ?? "mp4",
-        telegramReady: format.size === undefined || format.size <= TELEGRAM_REMOTE_VIDEO_MAX_BYTES,
       });
     }
 
-    if (isMp4Url(video.url) || (video.format?.toLowerCase().includes("mp4") && !isM3u8Url(video.url))) {
+    if (
+      isMp4Url(video.url) ||
+      (video.format?.toLowerCase().includes("mp4") && !isM3u8Url(video.url))
+    ) {
       candidates.push({
         url: video.url,
         thumbnail_url: video.thumbnail_url,
@@ -119,63 +112,11 @@ export function selectVideos(videos: FxVideo[]): SelectedVideo[] {
         height: video.height,
         size: video.filesize,
         container: "mp4",
-        telegramReady: video.filesize === undefined || video.filesize <= TELEGRAM_REMOTE_VIDEO_MAX_BYTES,
       });
     }
   }
 
-  // Sort by quality descending
   return candidates.sort((a, b) => candidateScore(b) - candidateScore(a));
-}
-
-function parseTotalBytes(res: Response): number | undefined {
-  const range = res.headers.get("content-range");
-  const total = range?.match(/\/(\d+)$/)?.[1];
-  if (total) return Number.parseInt(total, 10);
-
-  const length = res.headers.get("content-length");
-  if (length) return Number.parseInt(length, 10);
-
-  return undefined;
-}
-
-function isVideoContentType(contentType: string | null, url: string): boolean {
-  if (!contentType) return isMp4Url(url);
-  const type = contentType.toLowerCase().split(";", 1)[0]?.trim() ?? "";
-  if (type.startsWith("video/")) return true;
-  return type === "application/octet-stream" && isMp4Url(url);
-}
-
-export async function probeTelegramVideoUrl(
-  url: string,
-  fetcher: typeof fetch = fetch,
-): Promise<VideoProbe> {
-  let res: Response;
-  try {
-    res = await fetcher(url, {
-      method: "GET",
-      headers: { range: "bytes=0-0", "user-agent": "cc-xvideo-bot/0.1" },
-      redirect: "follow",
-    });
-  } catch (e) {
-    return { ok: false, reason: `probe failed: ${(e as Error).message}` };
-  }
-
-  if (!res.ok && res.status !== 206) {
-    return { ok: false, reason: `probe http ${res.status}` };
-  }
-
-  const contentType = res.headers.get("content-type");
-  if (!isVideoContentType(contentType, res.url || url)) {
-    return { ok: false, reason: `not video content: ${contentType ?? "unknown"}` };
-  }
-
-  const totalBytes = parseTotalBytes(res);
-  if (totalBytes !== undefined && totalBytes > TELEGRAM_REMOTE_VIDEO_MAX_BYTES) {
-    return { ok: false, reason: `video too large: ${totalBytes} bytes` };
-  }
-
-  return { ok: true };
 }
 
 export async function fetchTweet(statusId: string): Promise<FetchResult> {

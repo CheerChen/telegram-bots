@@ -1,0 +1,6 @@
+# From LINE Developers Console → Provider → Messaging API channel
+# Settings → Messaging API → Channel access token (long-lived) → Issue
+LINE_CHANNEL_ACCESS_TOKEN=
+
+# Settings → Basic settings → Channel secret
+LINE_CHANNEL_SECRET=

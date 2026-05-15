@@ -10,7 +10,8 @@
     "./types": "./src/types.ts",
     "./llm": "./src/llm.ts",
     "./session": "./src/session.ts",
-    "./jotoba": "./src/jotoba.ts"
+    "./jotoba": "./src/jotoba.ts",
+    "./fxtwitter": "./src/fxtwitter.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251101.0",
