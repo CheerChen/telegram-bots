@@ -1,4 +1,9 @@
+import type { SessionSource } from "./cache.ts";
 import type { SourceType } from "./url.ts";
+
+// ===========================================================================
+// Legacy single-turn prompts (Telegram flow — unchanged)
+// ===========================================================================
 
 export type ContextAction = "summary" | "translate" | "draft";
 
@@ -142,3 +147,81 @@ export function buildActionPrompt(action: ContextAction, input: PromptInput): st
       return draftPrompt(input);
   }
 }
+
+// ===========================================================================
+// Multi-turn session prompts (ilink flow)
+// ===========================================================================
+
+/**
+ * Build the system prompt for a multi-turn session.
+ * Called on session creation and whenever sources[] changes.
+ */
+export function buildSessionSystemPrompt(sources: SessionSource[]): string {
+  const sourcesBlock = sources
+    .map((s, i) => {
+      const label = sources.length > 1 ? `\n--- Source ${i + 1}: ${s.url} ---\n` : "";
+      return `${label}${s.markdown}`;
+    })
+    .join("\n\n");
+
+  return `你是一个给工程师使用的工作消息助手。用户在手机上阅读工作消息（Slack 等），需要你帮助理解、翻译或起草回复。
+
+核心规则：
+- 输出语言默认简体中文，除非用户明确要求其他语言
+- 源文里的日语、英语必须翻译成中文后再输出（URL、PR 编号、Jira key、代码、日志、人名、团队名、产品名保留原文）
+- 不要做深度 review，不要展开未给出的链接，不要假设自己读过未展开内容
+- 如果有多个来源，注意区分和关联
+- 回答要简洁，用户在手机上阅读
+
+回答格式规则：
+- 第一次总结会有专门的格式指令，严格遵守
+- 后续追问时，不要套用之前的固定格式，用自然的对话方式直接回答问题
+- 追问回答同样要简洁，不需要"要点""是否需要行动"等固定结构
+
+以下是用户提供的工作消息上下文：
+
+<<<
+${sourcesBlock}
+>>>`;
+}
+
+/**
+ * The initial summary instruction appended as the first user turn.
+ */
+export const INITIAL_SUMMARY_INSTRUCTION = `请基于上述工作消息，输出极短总结。用户在手机上阅读，目标是判断是否需要行动。
+
+固定格式：
+
+要点：
+- 最多 5 条
+
+我是否需要行动：
+- 需要 / 不需要 / 不确定（三选一）
+- 理由一句话
+
+如果要行动：
+- 下一步一句话
+
+约束：
+- 不要做深度分析
+- 不要展开代码、日志、URL
+- 如果内容里有 PR/Jira/Canvas/Confluence 等链接但没有展开，明确说"相关链接未展开"
+- 不要假设自己读过未展开链接
+- 如果上下文不充分，标记为"不确定"`;
+
+/**
+ * Instruction used when a new source is appended to an existing session.
+ */
+export const APPEND_SOURCE_INSTRUCTION = "我补充了新的上下文来源。请基于所有来源重新生成总结（同样格式）。";
+
+/**
+ * Shortcut expansion map. Keys are user input, values are the text
+ * appended to messages[] as a user turn. LLM never sees the shortcut number.
+ */
+export const SHORTCUT_MAP: Record<string, string> = {
+  "1": "请列出需要我关注或行动的事项，按优先级排序。",
+  "2": "请将上述对话内容翻译为中文。保留 URL、PR 编号、Jira key、代码、日志、人名。代码和日志不要逐行翻译，只给简短说明。",
+  "3": "请帮我起草一个日语回复，提供三个版本：短め（casual）、丁寧（polite）、確認質問（question）。回复要自然，适合公司 Slack。",
+};
+
+export const MENU_TEXT = "还需要我做什么？\n1 提取行动项  2 翻译全文  3 起草回复\n或直接输入任何问题";
