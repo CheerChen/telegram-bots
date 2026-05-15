@@ -1,36 +1,25 @@
 import { isAllowedChat, verifyWebhookSecret } from "shared/auth";
 import { chat, type Message as LlmMessage } from "shared/llm";
 import {
-  kvSessionStore,
-  newSession,
-  type Session,
-  type SessionSource,
-  touch,
-} from "shared/session";
-import {
   answerCallbackQuery,
   editMessageText,
-  escapeHtml,
-  type InlineKeyboardButton,
   type InlineKeyboardMarkup,
   sendMessage,
 } from "shared/telegram";
 import type { CallbackQuery, TelegramUpdate } from "shared/types";
 import {
-  SYSTEM_PROMPT,
-  translateQuotePrompt,
-  translateReplyPrompt,
-  translateRootPrompt,
-} from "./prompts.ts";
-import {
-  fetchSingleMessage,
-  fetchSlackThread,
-  isSlackUrl,
-  type NestedSlackLink,
-  renderLeanBlock,
-  type SingleMessageResult,
-  type SlackFetchResult,
-} from "./slack.ts";
+  deleteContext,
+  deleteLatestContextId,
+  getContext,
+  getLatestContextId,
+  newContextId,
+  putContext,
+  setLatestContextId,
+  type CachedContext,
+} from "./cache.ts";
+import { fetchContext, UnsupportedSourceError } from "./ctxd.ts";
+import { buildActionPrompt, type ContextAction } from "./prompts.ts";
+import { extractFirstUrl, sourceTypeName } from "./url.ts";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -41,236 +30,159 @@ interface Env {
   LLM_MODEL: string;
   SLACK_USER_TOKEN: string;
   CTXD_SESSIONS: KVNamespace;
+  CLAW_WORKER_SECRET?: string;
 }
 
-type CtxdSource = SessionSource & {
-  channelHeader: string;
-  rootLean: string;
-  replyLeans: string[];
-  nestedSlackLinks: NestedSlackLink[];
-};
+interface IlinkRequest {
+  userId?: string;
+  text?: string;
+}
 
-const URL_RE = /https?:\/\/\S+/g;
 const TG_MAX_LEN = 3900;
-const REPLY_BUTTON_CAP = 10;
-const QUOTE_BUTTON_CAP = 10;
-const BUTTONS_PER_ROW = 3;
-const CALLBACK_RE = /^(r|q):(\d+):(\d+)$/;
+const CONTEXT_PROMPT_MAX_CHARS = 30_000;
+const CALLBACK_RE = /^(summary|translate|draft):([a-z0-9]{12})$/;
+const TELEGRAM_SCOPE = "telegram";
+const ILINK_SCOPE = "ilink";
 
-function llmToHtml(text: string): string {
-  let out = escapeHtml(text);
-  out = out.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
-  out = out.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-  return out;
+const NO_CONTEXT_TEXT = "找不到上下文。请重新发送链接。";
+const READ_FAILED_TEXT = "链接读取失败。";
+const LLM_FAILED_TEXT = "处理失败。请再试一次。";
+const ONLY_SLACK_TEXT = "当前仅支持 Slack 链接。";
+const SEND_LINK_TEXT = "请发送 Slack 链接。";
+const ILINK_MENU_TEXT = "已读取 Slack 链接。请回复：\n1 总结\n2 翻译\n3 起草回复";
+
+function truncateOutput(text: string): string {
+  return text.length > TG_MAX_LEN ? `${text.slice(0, TG_MAX_LEN - 14)}\n…（已截断）` : text;
 }
 
-function truncate(s: string): string {
-  return s.length > TG_MAX_LEN ? `${s.slice(0, TG_MAX_LEN - 15)}\n…(truncated)` : s;
-}
-
-function buildLlmMessages(session: Session): LlmMessage[] {
-  return [{ role: "system", content: SYSTEM_PROMPT }, ...session.messages];
-}
-
-function buildKeyboard(
-  sourceN: number,
-  replyCount: number,
-  quoteCount: number,
-): InlineKeyboardMarkup | undefined {
-  const rows: InlineKeyboardButton[][] = [];
-  const replies = Math.min(replyCount, REPLY_BUTTON_CAP);
-  for (let i = 0; i < replies; i += BUTTONS_PER_ROW) {
-    const row: InlineKeyboardButton[] = [];
-    for (let j = i; j < Math.min(i + BUTTONS_PER_ROW, replies); j++) {
-      const idx = j + 1;
-      row.push({ text: `翻译 回复${idx}`, callback_data: `r:${sourceN}:${idx}` });
-    }
-    rows.push(row);
+function truncateContext(markdown: string): { markdown: string; truncated: boolean } {
+  if (markdown.length <= CONTEXT_PROMPT_MAX_CHARS) {
+    return { markdown, truncated: false };
   }
-  const quotes = Math.min(quoteCount, QUOTE_BUTTON_CAP);
-  for (let i = 0; i < quotes; i += BUTTONS_PER_ROW) {
-    const row: InlineKeyboardButton[] = [];
-    for (let j = i; j < Math.min(i + BUTTONS_PER_ROW, quotes); j++) {
-      const idx = j + 1;
-      row.push({ text: `翻译 引用${idx}`, callback_data: `q:${sourceN}:${idx}` });
-    }
-    rows.push(row);
-  }
-  return rows.length > 0 ? { inline_keyboard: rows } : undefined;
+  return { markdown: markdown.slice(0, CONTEXT_PROMPT_MAX_CHARS), truncated: true };
 }
 
-function extractFirstUrl(text: string): { url?: string; multiple: boolean } {
-  const urls = text.match(URL_RE) ?? [];
-  if (urls.length === 0) return { multiple: false };
-  if (urls.length > 1) return { multiple: true };
-  return { url: urls[0], multiple: false };
+function actionKeyboard(contextId: string): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "总结", callback_data: `summary:${contextId}` }],
+      [{ text: "翻译", callback_data: `translate:${contextId}` }],
+      [{ text: "起草回复", callback_data: `draft:${contextId}` }],
+    ],
+  };
+}
+
+function parseAction(text: string): ContextAction | null {
+  const normalized = text.trim().toLowerCase();
+  if (normalized === "1" || normalized === "总结" || normalized === "summary") return "summary";
+  if (normalized === "2" || normalized === "翻译" || normalized === "translate") return "translate";
+  if (normalized === "3" || normalized === "起草回复" || normalized === "draft") return "draft";
+  return null;
 }
 
 async function replyPlain(env: Env, chatId: number, text: string): Promise<void> {
   await sendMessage(env.TELEGRAM_BOT_TOKEN, {
     chatId,
     text,
-    parseMode: "HTML",
     disableWebPagePreview: true,
   });
 }
 
-async function callLlmAndRender(
+async function resetLatestContext(
+  env: Env,
+  scope: string,
+  id: string | number,
+): Promise<void> {
+  const contextId = await getLatestContextId(env.CTXD_SESSIONS, scope, id);
+  if (contextId) await deleteContext(env.CTXD_SESSIONS, contextId);
+  await deleteLatestContextId(env.CTXD_SESSIONS, scope, id);
+}
+
+async function createContext(env: Env, url: string): Promise<CachedContext> {
+  const fetched = await fetchContext(env.SLACK_USER_TOKEN, url);
+  const context: CachedContext = {
+    id: newContextId(),
+    url,
+    markdown: fetched.markdown,
+    sourceType: fetched.sourceType,
+    createdAt: new Date().toISOString(),
+  };
+  await putContext(env.CTXD_SESSIONS, context);
+  return context;
+}
+
+async function runAction(env: Env, context: CachedContext, action: ContextAction): Promise<string> {
+  const prepared = truncateContext(context.markdown);
+  const prompt = buildActionPrompt(action, {
+    url: context.url,
+    sourceType: context.sourceType,
+    markdown: prepared.markdown,
+    truncated: prepared.truncated,
+  });
+  const messages: LlmMessage[] = [{ role: "user", content: prompt }];
+  return chat(env, messages, { temperature: 0.2 });
+}
+
+async function ingestTelegramUrl(env: Env, chatId: number, url: string): Promise<void> {
+  const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+    chatId,
+    text: "正在读取链接...",
+    disableWebPagePreview: true,
+  });
+
+  let context: CachedContext;
+  try {
+    context = await createContext(env, url);
+  } catch (e) {
+    if (!(e instanceof UnsupportedSourceError)) {
+      console.error("ctxd fetch failed", e);
+    }
+    await editMessageText(env.TELEGRAM_BOT_TOKEN, {
+      chatId,
+      messageId: progressId,
+      text: e instanceof UnsupportedSourceError ? ONLY_SLACK_TEXT : READ_FAILED_TEXT,
+      disableWebPagePreview: true,
+    });
+    return;
+  }
+
+  await setLatestContextId(env.CTXD_SESSIONS, TELEGRAM_SCOPE, chatId, context.id);
+  await editMessageText(env.TELEGRAM_BOT_TOKEN, {
+    chatId,
+    messageId: progressId,
+    text: `已读取 ${sourceTypeName(context.sourceType)} 链接。请选择操作：`,
+    disableWebPagePreview: true,
+    replyMarkup: actionKeyboard(context.id),
+  });
+}
+
+async function handleTelegramAction(
   env: Env,
   chatId: number,
-  progressId: number,
-  session: Session,
-  keyboard?: InlineKeyboardMarkup,
+  contextId: string,
+  action: ContextAction,
 ): Promise<void> {
+  const context = await getContext(env.CTXD_SESSIONS, contextId);
+  if (!context) {
+    await replyPlain(env, chatId, NO_CONTEXT_TEXT);
+    return;
+  }
+
+  const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+    chatId,
+    text: `Asking ${env.LLM_MODEL}...`,
+    disableWebPagePreview: true,
+  });
+
   let answer: string;
   try {
-    answer = await chat(env, buildLlmMessages(session));
+    answer = await runAction(env, context, action);
   } catch (e) {
+    console.error("llm call failed", e);
     await editMessageText(env.TELEGRAM_BOT_TOKEN, {
       chatId,
       messageId: progressId,
-      text: `⚠️ LLM call failed: <code>${escapeHtml(e instanceof Error ? e.message : String(e))}</code>`,
-      parseMode: "HTML",
-      disableWebPagePreview: true,
-    });
-    return;
-  }
-  session.messages.push({ role: "assistant", content: answer });
-  await kvSessionStore(env.CTXD_SESSIONS).put(chatId, touch(session));
-
-  await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-    chatId,
-    messageId: progressId,
-    text: truncate(llmToHtml(answer)),
-    parseMode: "HTML",
-    disableWebPagePreview: true,
-    replyMarkup: keyboard,
-  });
-}
-
-async function ingestSlack(env: Env, chatId: number, url: string): Promise<void> {
-  const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-    chatId,
-    text: "⏳ Fetching Slack thread…",
-  });
-
-  let fetched: SlackFetchResult;
-  try {
-    fetched = await fetchSlackThread(env.SLACK_USER_TOKEN, url);
-  } catch (e) {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-      chatId,
-      messageId: progressId,
-      text: `⚠️ Slack fetch failed: <code>${escapeHtml(e instanceof Error ? e.message : String(e))}</code>`,
-      parseMode: "HTML",
-      disableWebPagePreview: true,
-    });
-    return;
-  }
-
-  const store = kvSessionStore(env.CTXD_SESSIONS);
-  const session = (await store.get(chatId)) ?? newSession();
-  const n = session.sources.length + 1;
-
-  const rootLean = renderLeanBlock(fetched.rootMessage);
-  const replyLeans = fetched.replies.map(renderLeanBlock);
-
-  const source: CtxdSource = {
-    n,
-    url,
-    type: "slack",
-    fetchedAt: new Date().toISOString(),
-    content: fetched.markdown,
-    channelHeader: fetched.channelHeader,
-    rootLean,
-    replyLeans,
-    nestedSlackLinks: fetched.nestedSlackLinks,
-  };
-
-  const prompt = translateRootPrompt(
-    n,
-    url,
-    fetched.channelHeader,
-    rootLean,
-    fetched.replies.length,
-    fetched.nestedSlackLinks.length,
-  );
-
-  session.sources.push(source);
-  session.messages.push({ role: "user", content: prompt });
-
-  await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-    chatId,
-    messageId: progressId,
-    text: "⏳ 翻译中…",
-    parseMode: "HTML",
-    disableWebPagePreview: true,
-  });
-
-  const keyboard = buildKeyboard(n, fetched.replies.length, fetched.nestedSlackLinks.length);
-  await callLlmAndRender(env, chatId, progressId, session, keyboard);
-}
-
-function findSource(session: Session, n: number): CtxdSource | undefined {
-  return session.sources.find((s) => s.n === n) as CtxdSource | undefined;
-}
-
-async function translateReply(
-  env: Env,
-  chatId: number,
-  sourceN: number,
-  replyIdx: number,
-): Promise<void> {
-  const store = kvSessionStore(env.CTXD_SESSIONS);
-  const session = await store.get(chatId);
-  if (!session) return replyPlain(env, chatId, "Session expired. 发新 URL 重开。");
-  const source = findSource(session, sourceN);
-  if (!source) return replyPlain(env, chatId, `Source ${sourceN} not found.`);
-  const blocks = source.replyLeans ?? [];
-  if (replyIdx < 1 || replyIdx > blocks.length) {
-    return replyPlain(env, chatId, `回复 ${replyIdx} 越界 (1-${blocks.length}).`);
-  }
-
-  const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-    chatId,
-    text: `⏳ 翻译回复 ${replyIdx}…`,
-  });
-  const prompt = translateReplyPrompt(sourceN, replyIdx, blocks.length, blocks[replyIdx - 1]!);
-  session.messages.push({ role: "user", content: prompt });
-  await callLlmAndRender(env, chatId, progressId, session);
-}
-
-async function translateQuote(
-  env: Env,
-  chatId: number,
-  sourceN: number,
-  quoteIdx: number,
-): Promise<void> {
-  const store = kvSessionStore(env.CTXD_SESSIONS);
-  const session = await store.get(chatId);
-  if (!session) return replyPlain(env, chatId, "Session expired. 发新 URL 重开。");
-  const source = findSource(session, sourceN);
-  if (!source) return replyPlain(env, chatId, `Source ${sourceN} not found.`);
-  const links = source.nestedSlackLinks ?? [];
-  if (quoteIdx < 1 || quoteIdx > links.length) {
-    return replyPlain(env, chatId, `引用 ${quoteIdx} 越界 (1-${links.length}).`);
-  }
-  const link = links[quoteIdx - 1]!;
-
-  const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-    chatId,
-    text: `⏳ 拉取引用 ${quoteIdx}…`,
-  });
-
-  let single: SingleMessageResult;
-  try {
-    single = await fetchSingleMessage(env.SLACK_USER_TOKEN, link.url);
-  } catch (e) {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-      chatId,
-      messageId: progressId,
-      text: `⚠️ Quote fetch failed: <code>${escapeHtml(e instanceof Error ? e.message : String(e))}</code>`,
-      parseMode: "HTML",
+      text: LLM_FAILED_TEXT,
       disableWebPagePreview: true,
     });
     return;
@@ -279,71 +191,26 @@ async function translateQuote(
   await editMessageText(env.TELEGRAM_BOT_TOKEN, {
     chatId,
     messageId: progressId,
-    text: `⏳ 翻译引用 ${quoteIdx}…`,
-    parseMode: "HTML",
+    text: truncateOutput(answer),
     disableWebPagePreview: true,
   });
-
-  const leanBlock = renderLeanBlock(single.message);
-  const prompt = translateQuotePrompt(
-    sourceN,
-    quoteIdx,
-    link.url,
-    single.channelHeader,
-    leanBlock,
-    single.isThreadReply,
-  );
-  session.messages.push({ role: "user", content: prompt });
-  await callLlmAndRender(env, chatId, progressId, session);
-}
-
-async function followUp(env: Env, chatId: number, session: Session, text: string): Promise<void> {
-  const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-    chatId,
-    text: "⏳ 思考中…",
-  });
-  session.messages.push({ role: "user", content: text });
-  await callLlmAndRender(env, chatId, progressId, session);
-}
-
-async function showStatus(env: Env, chatId: number): Promise<void> {
-  const session = await kvSessionStore(env.CTXD_SESSIONS).get(chatId);
-  if (!session) return replyPlain(env, chatId, "No active session.");
-  const lines = [
-    `Session since: <code>${escapeHtml(session.createdAt)}</code>`,
-    `Messages: ${session.messages.length}`,
-    `Sources (${session.sources.length}):`,
-  ];
-  for (const raw of session.sources) {
-    const s = raw as CtxdSource;
-    const replies = (s.replyLeans ?? []).length;
-    const quotes = (s.nestedSlackLinks ?? []).length;
-    lines.push(`${s.n}. ${escapeHtml(s.url)} — ${replies} 回复, ${quotes} 引用`);
-  }
-  return replyPlain(env, chatId, lines.join("\n"));
-}
-
-async function resetSession(env: Env, chatId: number): Promise<void> {
-  await kvSessionStore(env.CTXD_SESSIONS).delete(chatId);
-  return replyPlain(env, chatId, "Session reset. 发 Slack URL 重新开始。");
 }
 
 async function handleUserMessage(env: Env, chatId: number, rawText: string): Promise<void> {
   const text = rawText.trim();
 
-  if (text === "/reset" || text === "/new") return resetSession(env, chatId);
-  if (text === "/status") return showStatus(env, chatId);
-
-  const { url, multiple } = extractFirstUrl(text);
-  if (multiple) return replyPlain(env, chatId, "一次只发一个 URL 哦。");
-  if (url) {
-    if (!isSlackUrl(url)) return replyPlain(env, chatId, "目前只支持 Slack URL。");
-    return ingestSlack(env, chatId, url);
+  if (text === "/start" || text === "/help") {
+    return replyPlain(env, chatId, "发送 Slack 链接后，我会提供三个操作：总结、翻译、起草回复。");
+  }
+  if (text === "/reset" || text === "/new") {
+    await resetLatestContext(env, TELEGRAM_SCOPE, chatId);
+    return replyPlain(env, chatId, "已清除上下文。请重新发送链接。");
   }
 
-  const session = await kvSessionStore(env.CTXD_SESSIONS).get(chatId);
-  if (!session) return replyPlain(env, chatId, "发个 Slack URL 开始 session。");
-  return followUp(env, chatId, session, text);
+  const { url, multiple } = extractFirstUrl(text);
+  if (multiple) return replyPlain(env, chatId, "一次请只发送一个链接。");
+  if (!url) return replyPlain(env, chatId, SEND_LINK_TEXT);
+  return ingestTelegramUrl(env, chatId, url);
 }
 
 async function handleCallback(env: Env, cq: CallbackQuery): Promise<void> {
@@ -353,17 +220,74 @@ async function handleCallback(env: Env, cq: CallbackQuery): Promise<void> {
 
   const match = (cq.data ?? "").match(CALLBACK_RE);
   if (!match) return;
-  const kind = match[1]!;
-  const sourceN = Number.parseInt(match[2]!, 10);
-  const idx = Number.parseInt(match[3]!, 10);
+  await handleTelegramAction(env, chatId, match[2]!, match[1] as ContextAction);
+}
 
-  if (kind === "r") return translateReply(env, chatId, sourceN, idx);
-  if (kind === "q") return translateQuote(env, chatId, sourceN, idx);
+async function handleIlink(env: Env, req: Request): Promise<Response> {
+  if (!env.CLAW_WORKER_SECRET) return new Response("not configured", { status: 503 });
+  if (req.headers.get("x-claw-secret") !== env.CLAW_WORKER_SECRET) {
+    return new Response("forbidden", { status: 403 });
+  }
+
+  const body = (await req.json().catch(() => null)) as IlinkRequest | null;
+  const userId = body?.userId?.trim();
+  const text = body?.text?.trim();
+  if (!userId || !text) {
+    return Response.json({ error: "missing userId or text" }, { status: 400 });
+  }
+
+  if (text === "/reset" || text === "/new") {
+    await resetLatestContext(env, ILINK_SCOPE, userId);
+    return Response.json({ text: "已清除上下文。请重新发送链接。" });
+  }
+
+  const { url, multiple } = extractFirstUrl(text);
+  if (multiple) return Response.json({ text: "一次请只发送一个链接。" });
+
+  if (url) {
+    let context: CachedContext;
+    try {
+      context = await createContext(env, url);
+    } catch (e) {
+      if (!(e instanceof UnsupportedSourceError)) {
+        console.error("ctxd fetch failed", e);
+      }
+      return Response.json({ text: e instanceof UnsupportedSourceError ? ONLY_SLACK_TEXT : READ_FAILED_TEXT });
+    }
+
+    await setLatestContextId(env.CTXD_SESSIONS, ILINK_SCOPE, userId, context.id);
+    return Response.json({ text: ILINK_MENU_TEXT });
+  }
+
+  const action = parseAction(text);
+  if (!action) {
+    return Response.json({
+      text: "请发送 Slack 链接，或在读取链接后回复：1 总结 / 2 翻译 / 3 起草回复",
+    });
+  }
+
+  const contextId = await getLatestContextId(env.CTXD_SESSIONS, ILINK_SCOPE, userId);
+  if (!contextId) return Response.json({ text: NO_CONTEXT_TEXT });
+  const context = await getContext(env.CTXD_SESSIONS, contextId);
+  if (!context) return Response.json({ text: NO_CONTEXT_TEXT });
+
+  try {
+    const answer = await runAction(env, context, action);
+    return Response.json({ text: truncateOutput(answer) });
+  } catch (e) {
+    console.error("llm call failed", e);
+    return Response.json({ text: LLM_FAILED_TEXT });
+  }
 }
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
+
+    if (req.method === "POST" && url.pathname === "/ilink") {
+      return handleIlink(env, req);
+    }
+
     if (req.method !== "POST" || url.pathname !== "/webhook") {
       return new Response("ctxd-bot", { status: 200 });
     }

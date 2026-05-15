@@ -1,7 +1,7 @@
 import { allowChatWithCap, verifyWebhookSecret } from "shared/auth";
 import { escapeHtml, sendMessage, sendVideo } from "shared/telegram";
 import type { TelegramUpdate } from "shared/types";
-import { extractStatusId, fetchTweet } from "./fxtwitter.ts";
+import { extractStatusId, fetchTweet, probeTelegramVideoUrl } from "./fxtwitter.ts";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -80,6 +80,30 @@ export default {
     const author = tweet.author?.screen_name ? `@${tweet.author.screen_name}` : "";
     const body = tweet.text ?? "";
     const caption = [author, body].filter(Boolean).join("\n").slice(0, 1024);
+
+    if (!video.telegramReady) {
+      await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+        chatId: msg.chat.id,
+        text: `📹 ${escapeHtml(caption)}\n<a href="${escapeHtml(video.url)}">direct link</a>`,
+        parseMode: "HTML",
+        replyToMessageId: msg.message_id,
+      });
+      return new Response("ok");
+    }
+
+    const probe = await probeTelegramVideoUrl(video.url);
+    if (!probe.ok) {
+      await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+        chatId: msg.chat.id,
+        text:
+          `📹 ${escapeHtml(caption)}\n` +
+          `<a href="${escapeHtml(video.url)}">direct link</a>\n` +
+          `<i>(${escapeHtml(probe.reason ?? "not sendable by Telegram")})</i>`,
+        parseMode: "HTML",
+        replyToMessageId: msg.message_id,
+      });
+      return new Response("ok");
+    }
 
     try {
       await sendVideo(env.TELEGRAM_BOT_TOKEN, {

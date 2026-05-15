@@ -7,6 +7,7 @@ Monorepo for personal Telegram bots deployed on Cloudflare Workers.
 ```
 packages/shared/    # Telegram client, webhook auth, shared types
 bots/katakana/      # CN/EN word -> Japanese / Katakana (Jisho API)
+bots/ctxd/          # Slack link -> summarize / translate / draft reply
 ```
 
 Each bot under `bots/` is an independent Cloudflare Worker with its own
@@ -77,6 +78,50 @@ pnpm dev                          # wrangler dev with hot reload
 Local dev does not receive Telegram webhooks unless you tunnel
 (e.g. `cloudflared tunnel`). For most iteration just `pnpm deploy` and
 test against the live worker.
+
+## Per-bot setup: ctxd
+
+`bots/ctxd` is a lightweight Slack-link assistant. Send a Slack URL and it
+fetches the thread once, stores the markdown context in KV, then lets the user
+choose one action: summarize, translate, or draft a reply.
+
+Required secrets:
+
+```bash
+cd bots/ctxd
+pnpm wrangler secret put TELEGRAM_BOT_TOKEN
+pnpm wrangler secret put TELEGRAM_WEBHOOK_SECRET
+pnpm wrangler secret put LLM_API_KEY
+pnpm wrangler secret put SLACK_USER_TOKEN
+pnpm wrangler secret put CLAW_WORKER_SECRET
+```
+
+Required vars and bindings live in `bots/ctxd/wrangler.toml`:
+
+- `ALLOWED_CHAT_ID`
+- `LLM_BASE_URL`
+- `LLM_MODEL`
+- `CTXD_SESSIONS` KV namespace
+
+Deploy:
+
+```bash
+cd bots/ctxd
+pnpm deploy
+```
+
+Register the Telegram webhook:
+
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  --data-urlencode "url=https://ctxd-bot.<your-subdomain>.workers.dev/webhook" \
+  --data-urlencode "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+```
+
+For clawbot integration, set `WORKER_URL_CTXD` to the ctxd worker's `/ilink`
+endpoint and use the same `CLAW_WORKER_SECRET` on both sides. In clawbot ctxd
+mode, send a Slack URL first, then reply with `1` for summarize, `2` for
+translate, or `3` for draft reply.
 
 ## Adding a new bot
 

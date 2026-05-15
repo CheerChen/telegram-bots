@@ -15,3 +15,6 @@ LLM_API_KEY=
 
 # Slack user token (xoxp-...). Same one your ctxd CLI uses.
 SLACK_USER_TOKEN=
+
+# Shared secret for clawbot -> ctxd-bot /ilink calls.
+CLAW_WORKER_SECRET=

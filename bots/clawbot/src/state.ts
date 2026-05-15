@@ -8,11 +8,10 @@ import type { LoginStatus, QRCodeResponse, TokenFile } from "ilink/types";
 
 import type { ClawConfig } from "./config.ts";
 import { routeMessage, type RouterContext } from "./router.ts";
-import type { SessionStore } from "./sessions.ts";
 
 export type ClawStatus = "auth-required" | "authing" | "running";
 export type AuthReason = "initial" | "expired" | "manual-reset";
-export type HandlerName = "katakana" | "ctxd";
+export type HandlerName = "ctxd";
 
 export interface HandlerStats {
   configured: boolean;
@@ -52,12 +51,8 @@ export class ClawState {
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private handlerStats: Record<HandlerName, HandlerStats>;
 
-  constructor(
-    private readonly config: ClawConfig,
-    private readonly sessions: SessionStore,
-  ) {
+  constructor(private readonly config: ClawConfig) {
     this.handlerStats = {
-      katakana: { configured: this.isHandlerConfigured("katakana"), invocations: 0 },
       ctxd: { configured: this.isHandlerConfigured("ctxd"), invocations: 0 },
     };
   }
@@ -88,8 +83,7 @@ export class ClawState {
 
   private isHandlerConfigured(name: HandlerName): boolean {
     if (!this.config.workerSecret) return false;
-    const url = (this.config.workers as Record<string, string | undefined>)[name];
-    return Boolean(url);
+    return Boolean(this.config.workers[name]);
   }
 
   async boot(): Promise<void> {
@@ -210,7 +204,6 @@ export class ClawState {
       config: this.config,
       baseUrl,
       token: this.token.bot_token,
-      sessions: this.sessions,
       recordHandlerCall: (name, result, durationMs, error) =>
         this.recordHandlerCall(name, result, durationMs, error),
     };

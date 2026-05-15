@@ -7,7 +7,7 @@ ALLOWED_CHAT_ID = "6950532953"
 
 # Aliyun DashScope OpenAI-compatible endpoint (international).
 LLM_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-LLM_MODEL = "qwen3-coder-plus-2025-09-23"
+LLM_MODEL = "qwen3.6-flash-2026-04-16"
 
 # KV for per-chat session state. Run once:
 #   pnpm wrangler kv namespace create CTXD_SESSIONS
@@ -21,3 +21,4 @@ id = "5e5c6e5b16e04b609eb82e312c6cbd52"
 #   TELEGRAM_WEBHOOK_SECRET
 #   LLM_API_KEY            (DashScope API key)
 #   SLACK_USER_TOKEN       (xoxp-...)
+#   CLAW_WORKER_SECRET     (shared with clawbot for POST /ilink)
