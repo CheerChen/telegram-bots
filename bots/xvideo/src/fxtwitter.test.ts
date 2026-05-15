@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { extractStatusId, selectVideos } from "shared/fxtwitter";
 import {
-  extractStatusId,
+  isTelegramSendable,
   probeTelegramVideoUrl,
-  selectVideos,
   TELEGRAM_REMOTE_VIDEO_MAX_BYTES,
-} from "./fxtwitter.ts";
+} from "./telegram-video.ts";
 
 test("extractStatusId supports x/twitter/fx style status URLs", () => {
   assert.equal(extractStatusId("https://x.com/user/status/1234567890"), "1234567890");
@@ -48,11 +48,11 @@ test("selectVideos returns candidates sorted by quality descending", () => {
 
   assert.equal(candidates.length, 2);
   assert.equal(candidates[0]?.url, "https://video.example/high.mp4");
-  assert.equal(candidates[0]?.telegramReady, true);
+  assert.equal(isTelegramSendable(candidates[0]!), true);
   assert.equal(candidates[1]?.url, "https://video.example/low.mp4");
 });
 
-test("selectVideos marks oversized candidates as not telegramReady", () => {
+test("isTelegramSendable rejects candidates above remote limit", () => {
   const candidates = selectVideos([
     {
       url: "https://video.example/master.m3u8",
@@ -71,7 +71,7 @@ test("selectVideos marks oversized candidates as not telegramReady", () => {
 
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0]?.url, "https://video.example/huge.mp4");
-  assert.equal(candidates[0]?.telegramReady, false);
+  assert.equal(isTelegramSendable(candidates[0]!), false);
 });
 
 test("selectVideos returns fallback candidates when highest quality exceeds limit", () => {
@@ -100,11 +100,11 @@ test("selectVideos returns fallback candidates when highest quality exceeds limi
   ]);
 
   assert.equal(candidates.length, 2);
-  // 4k is first (highest quality) but not telegram-ready
-  assert.equal(candidates[0]?.telegramReady, false);
-  // 720p is second and telegram-ready
+  // 4k is first (highest quality) but not telegram-sendable
+  assert.equal(isTelegramSendable(candidates[0]!), false);
+  // 720p is second and telegram-sendable
   assert.equal(candidates[1]?.url, "https://video.example/720p.mp4");
-  assert.equal(candidates[1]?.telegramReady, true);
+  assert.equal(isTelegramSendable(candidates[1]!), true);
 });
 
 test("selectVideos ignores non-mp4 and m3u8-only videos", () => {

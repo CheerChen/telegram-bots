@@ -1,0 +1,18 @@
+name = "cc-xvideo-line-bot"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[vars]
+# Soft cap on auto-registered private users. First N who DM the bot get in.
+MAX_CHATS = "50"
+
+# KV for user whitelist + counter. Create with:
+#   pnpm wrangler kv namespace create xvideo-line-chats
+# then paste the returned id below.
+[[kv_namespaces]]
+binding = "CHATS"
+id = "218ac1ea78984050af75e92e2d884f84"
+
+# Secrets (set via `pnpm wrangler secret put <NAME>` or `pnpm secrets:push`):
+#   LINE_CHANNEL_ACCESS_TOKEN
+#   LINE_CHANNEL_SECRET
