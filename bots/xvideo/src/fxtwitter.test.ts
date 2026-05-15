@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   extractStatusId,
   probeTelegramVideoUrl,
-  selectVideo,
+  selectVideos,
   TELEGRAM_REMOTE_VIDEO_MAX_BYTES,
 } from "./fxtwitter.ts";
 
@@ -15,8 +15,8 @@ test("extractStatusId supports x/twitter/fx style status URLs", () => {
   assert.equal(extractStatusId("not a status URL"), null);
 });
 
-test("selectVideo prefers highest quality sendable mp4 format", () => {
-  const selected = selectVideo([
+test("selectVideos returns candidates sorted by quality descending", () => {
+  const candidates = selectVideos([
     {
       url: "https://video.example/master.m3u8",
       formats: [
@@ -46,12 +46,14 @@ test("selectVideo prefers highest quality sendable mp4 format", () => {
     },
   ]);
 
-  assert.equal(selected?.url, "https://video.example/high.mp4");
-  assert.equal(selected?.telegramReady, true);
+  assert.equal(candidates.length, 2);
+  assert.equal(candidates[0]?.url, "https://video.example/high.mp4");
+  assert.equal(candidates[0]?.telegramReady, true);
+  assert.equal(candidates[1]?.url, "https://video.example/low.mp4");
 });
 
-test("selectVideo marks only oversized mp4 candidates as direct-link only", () => {
-  const selected = selectVideo([
+test("selectVideos marks oversized candidates as not telegramReady", () => {
+  const candidates = selectVideos([
     {
       url: "https://video.example/master.m3u8",
       formats: [
@@ -67,12 +69,46 @@ test("selectVideo marks only oversized mp4 candidates as direct-link only", () =
     },
   ]);
 
-  assert.equal(selected?.url, "https://video.example/huge.mp4");
-  assert.equal(selected?.telegramReady, false);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.url, "https://video.example/huge.mp4");
+  assert.equal(candidates[0]?.telegramReady, false);
 });
 
-test("selectVideo ignores non-mp4 and m3u8-only videos", () => {
-  const selected = selectVideo([
+test("selectVideos returns fallback candidates when highest quality exceeds limit", () => {
+  const candidates = selectVideos([
+    {
+      url: "https://video.example/master.m3u8",
+      formats: [
+        {
+          container: "mp4",
+          url: "https://video.example/4k.mp4",
+          size: TELEGRAM_REMOTE_VIDEO_MAX_BYTES + 5_000_000,
+          height: 2160,
+          width: 3840,
+          bitrate: 8192,
+        },
+        {
+          container: "mp4",
+          url: "https://video.example/720p.mp4",
+          size: 10_000_000,
+          height: 720,
+          width: 1280,
+          bitrate: 2176,
+        },
+      ],
+    },
+  ]);
+
+  assert.equal(candidates.length, 2);
+  // 4k is first (highest quality) but not telegram-ready
+  assert.equal(candidates[0]?.telegramReady, false);
+  // 720p is second and telegram-ready
+  assert.equal(candidates[1]?.url, "https://video.example/720p.mp4");
+  assert.equal(candidates[1]?.telegramReady, true);
+});
+
+test("selectVideos ignores non-mp4 and m3u8-only videos", () => {
+  const candidates = selectVideos([
     {
       url: "https://video.example/master.m3u8",
       formats: [
@@ -82,7 +118,7 @@ test("selectVideo ignores non-mp4 and m3u8-only videos", () => {
     },
   ]);
 
-  assert.equal(selected, null);
+  assert.equal(candidates.length, 0);
 });
 
 test("probeTelegramVideoUrl accepts video/mp4 within Telegram remote limit", async () => {

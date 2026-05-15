@@ -65,7 +65,7 @@ export interface SelectedVideo {
 }
 
 export type FetchResult =
-  | { kind: "video"; video: SelectedVideo; tweet: FxTweet }
+  | { kind: "video"; candidates: SelectedVideo[]; tweet: FxTweet }
   | { kind: "novideo"; tweet: FxTweet }
   | { kind: "error"; reason: string };
 
@@ -83,7 +83,13 @@ function candidateScore(v: SelectedVideo): number {
   return (v.bitrate ?? 0) * 100_000_000 + (v.height ?? 0) * 100_000 + (v.width ?? 0) * 100 + (v.size ?? 0);
 }
 
-export function selectVideo(videos: FxVideo[]): SelectedVideo | null {
+/**
+ * Return all MP4 candidates sorted by quality (descending).
+ * Candidates with known size ≤20MB are marked telegramReady.
+ * Candidates with unknown size are optimistically marked telegramReady
+ * (caller should probe to verify).
+ */
+export function selectVideos(videos: FxVideo[]): SelectedVideo[] {
   const candidates: SelectedVideo[] = [];
 
   for (const video of videos) {
@@ -118,13 +124,8 @@ export function selectVideo(videos: FxVideo[]): SelectedVideo | null {
     }
   }
 
-  const sendable = candidates
-    .filter((v) => v.telegramReady)
-    .sort((a, b) => candidateScore(b) - candidateScore(a));
-  if (sendable[0]) return sendable[0];
-
-  const directOnly = candidates.sort((a, b) => candidateScore(b) - candidateScore(a));
-  return directOnly[0] ? { ...directOnly[0], telegramReady: false } : null;
+  // Sort by quality descending
+  return candidates.sort((a, b) => candidateScore(b) - candidateScore(a));
 }
 
 function parseTotalBytes(res: Response): number | undefined {
@@ -193,7 +194,7 @@ export async function fetchTweet(statusId: string): Promise<FetchResult> {
   if (data.code !== 200 || !tweet) {
     return { kind: "error", reason: data.message ?? `code ${data.code}` };
   }
-  const video = selectVideo(tweet.media?.videos ?? []);
-  if (!video) return { kind: "novideo", tweet };
-  return { kind: "video", video, tweet };
+  const candidates = selectVideos(tweet.media?.videos ?? []);
+  if (!candidates.length) return { kind: "novideo", tweet };
+  return { kind: "video", candidates, tweet };
 }

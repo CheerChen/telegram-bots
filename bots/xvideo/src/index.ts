@@ -76,50 +76,46 @@ export default {
       return new Response("ok");
     }
 
-    const { video, tweet } = result;
+    const { candidates, tweet } = result;
     const author = tweet.author?.screen_name ? `@${tweet.author.screen_name}` : "";
     const body = tweet.text ?? "";
     const caption = [author, body].filter(Boolean).join("\n").slice(0, 1024);
 
-    if (!video.telegramReady) {
-      await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-        chatId: msg.chat.id,
-        text: `📹 ${escapeHtml(caption)}\n<a href="${escapeHtml(video.url)}">direct link</a>`,
-        parseMode: "HTML",
-        replyToMessageId: msg.message_id,
-      });
-      return new Response("ok");
+    // Try candidates from highest to lowest quality.
+    // Skip known-oversized; probe the rest to find one Telegram can send.
+    let sent = false;
+    const best = candidates[0]!;
+    for (const video of candidates) {
+      if (!video.telegramReady) continue;
+
+      const probe = await probeTelegramVideoUrl(video.url);
+      if (!probe.ok) continue;
+
+      try {
+        await sendVideo(env.TELEGRAM_BOT_TOKEN, {
+          chatId: msg.chat.id,
+          video: video.url,
+          caption:
+            video !== best
+              ? `${caption}\n(${video.width ?? "?"}×${video.height ?? "?"})`
+              : caption,
+          supportsStreaming: true,
+          replyToMessageId: msg.message_id,
+        });
+        sent = true;
+        break;
+      } catch {
+        continue;
+      }
     }
 
-    const probe = await probeTelegramVideoUrl(video.url);
-    if (!probe.ok) {
+    if (!sent) {
       await sendMessage(env.TELEGRAM_BOT_TOKEN, {
         chatId: msg.chat.id,
         text:
           `📹 ${escapeHtml(caption)}\n` +
-          `<a href="${escapeHtml(video.url)}">direct link</a>\n` +
-          `<i>(${escapeHtml(probe.reason ?? "not sendable by Telegram")})</i>`,
-        parseMode: "HTML",
-        replyToMessageId: msg.message_id,
-      });
-      return new Response("ok");
-    }
-
-    try {
-      await sendVideo(env.TELEGRAM_BOT_TOKEN, {
-        chatId: msg.chat.id,
-        video: video.url,
-        caption,
-        supportsStreaming: true,
-        replyToMessageId: msg.message_id,
-      });
-    } catch (e) {
-      await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-        chatId: msg.chat.id,
-        text:
-          `📹 ${escapeHtml(caption)}\n` +
-          `<a href="${escapeHtml(video.url)}">direct link</a>\n` +
-          `<i>(${escapeHtml((e as Error).message)})</i>`,
+          `<a href="${escapeHtml(best.url)}">direct link</a>\n` +
+          `<i>(all qualities exceed 20 MB)</i>`,
         parseMode: "HTML",
         replyToMessageId: msg.message_id,
       });
