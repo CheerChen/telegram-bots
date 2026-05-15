@@ -10,15 +10,28 @@ import type { CallbackQuery, TelegramUpdate } from "shared/types";
 import {
   deleteContext,
   deleteLatestContextId,
+  deleteSession,
   getContext,
   getLatestContextId,
+  getSession,
   newContextId,
   putContext,
+  putSession,
   setLatestContextId,
   type CachedContext,
+  type Session,
+  type SessionSource,
 } from "./cache.ts";
 import { fetchContext, UnsupportedSourceError } from "./ctxd.ts";
-import { buildActionPrompt, type ContextAction } from "./prompts.ts";
+import {
+  APPEND_SOURCE_INSTRUCTION,
+  buildActionPrompt,
+  buildSessionSystemPrompt,
+  INITIAL_SUMMARY_INSTRUCTION,
+  MENU_TEXT,
+  SHORTCUT_MAP,
+  type ContextAction,
+} from "./prompts.ts";
 import { extractFirstUrl, sourceTypeName } from "./url.ts";
 
 interface Env {
@@ -44,12 +57,16 @@ const CALLBACK_RE = /^(summary|translate|draft):([a-z0-9]{12})$/;
 const TELEGRAM_SCOPE = "telegram";
 const ILINK_SCOPE = "ilink";
 
+// Rough char-based limit. qwen3.6-flash supports ~131K tokens.
+// 1 token ≈ 1.5 chars for mixed CJK/EN. Keep headroom for output.
+const MAX_SESSION_CHARS = 200_000;
+
 const NO_CONTEXT_TEXT = "找不到上下文。请重新发送链接。";
 const READ_FAILED_TEXT = "链接读取失败。";
 const LLM_FAILED_TEXT = "处理失败。请再试一次。";
 const ONLY_SLACK_TEXT = "当前仅支持 Slack 链接。";
 const SEND_LINK_TEXT = "请发送 Slack 链接。";
-const ILINK_MENU_TEXT = "已读取 Slack 链接。请回复：\n1 总结\n2 翻译\n3 起草回复";
+const SESSION_TOO_LONG_TEXT = "对话过长。请发 0 重置或发送新链接开始新会话。";
 
 function truncateOutput(text: string): string {
   return text.length > TG_MAX_LEN ? `${text.slice(0, TG_MAX_LEN - 14)}\n…（已截断）` : text;
@@ -70,14 +87,6 @@ function actionKeyboard(contextId: string): InlineKeyboardMarkup {
       [{ text: "起草回复", callback_data: `draft:${contextId}` }],
     ],
   };
-}
-
-function parseAction(text: string): ContextAction | null {
-  const normalized = text.trim().toLowerCase();
-  if (normalized === "1" || normalized === "总结" || normalized === "summary") return "summary";
-  if (normalized === "2" || normalized === "翻译" || normalized === "translate") return "translate";
-  if (normalized === "3" || normalized === "起草回复" || normalized === "draft") return "draft";
-  return null;
 }
 
 async function replyPlain(env: Env, chatId: number, text: string): Promise<void> {
@@ -216,7 +225,7 @@ async function handleUserMessage(env: Env, chatId: number, rawText: string): Pro
 async function handleCallback(env: Env, cq: CallbackQuery): Promise<void> {
   const chatId = cq.message?.chat.id;
   if (!chatId) return;
-  await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cq.id).catch(() => {});
+  await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cq.id).catch(() => { });
 
   const match = (cq.data ?? "").match(CALLBACK_RE);
   if (!match) return;
@@ -236,48 +245,112 @@ async function handleIlink(env: Env, req: Request): Promise<Response> {
     return Response.json({ error: "missing userId or text" }, { status: 400 });
   }
 
-  if (text === "/reset" || text === "/new") {
-    await resetLatestContext(env, ILINK_SCOPE, userId);
-    return Response.json({ text: "已清除上下文。请重新发送链接。" });
+  // Reset commands
+  if (text === "/reset" || text === "/new" || text === "0") {
+    await deleteSession(env.CTXD_SESSIONS, ILINK_SCOPE, userId);
+    return Response.json({ text: "已重置。请发送 Slack 链接开始新会话。" });
   }
 
   const { url, multiple } = extractFirstUrl(text);
   if (multiple) return Response.json({ text: "一次请只发送一个链接。" });
 
+  // ---- URL received: create or append source ----
   if (url) {
-    let context: CachedContext;
+    let markdown: string;
+    let sourceType: import("./url.ts").SourceType;
     try {
-      context = await createContext(env, url);
+      const fetched = await fetchContext(env.SLACK_USER_TOKEN, url);
+      markdown = fetched.markdown;
+      sourceType = fetched.sourceType;
     } catch (e) {
-      if (!(e instanceof UnsupportedSourceError)) {
-        console.error("ctxd fetch failed", e);
-      }
+      if (!(e instanceof UnsupportedSourceError)) console.error("ctxd fetch failed", e);
       return Response.json({ text: e instanceof UnsupportedSourceError ? ONLY_SLACK_TEXT : READ_FAILED_TEXT });
     }
 
-    await setLatestContextId(env.CTXD_SESSIONS, ILINK_SCOPE, userId, context.id);
-    return Response.json({ text: ILINK_MENU_TEXT });
+    const newSource: SessionSource = {
+      url,
+      markdown,
+      sourceType,
+      fetchedAt: new Date().toISOString(),
+    };
+
+    let session = await getSession(env.CTXD_SESSIONS, ILINK_SCOPE, userId);
+    const isAppend = session !== null;
+
+    if (isAppend) {
+      // Append source to existing session
+      session!.sources.push(newSource);
+      // Rebuild system prompt with all sources
+      session!.messages[0] = { role: "system", content: buildSessionSystemPrompt(session!.sources) };
+      // Ask LLM to re-summarize
+      session!.messages.push({ role: "user", content: APPEND_SOURCE_INSTRUCTION });
+    } else {
+      // New session
+      const now = new Date().toISOString();
+      session = {
+        sources: [newSource],
+        messages: [
+          { role: "system", content: buildSessionSystemPrompt([newSource]) },
+          { role: "user", content: INITIAL_SUMMARY_INSTRUCTION },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+
+    // Check size
+    const totalChars = session!.messages.reduce((n, m) => n + m.content.length, 0);
+    if (totalChars > MAX_SESSION_CHARS) {
+      return Response.json({ text: SESSION_TOO_LONG_TEXT });
+    }
+
+    // LLM call
+    let answer: string;
+    try {
+      answer = await chat(env, session!.messages, { temperature: 0.2 });
+    } catch (e) {
+      console.error("llm call failed", e);
+      return Response.json({ text: LLM_FAILED_TEXT });
+    }
+
+    session!.messages.push({ role: "assistant", content: answer });
+    await putSession(env.CTXD_SESSIONS, ILINK_SCOPE, userId, session!);
+
+    const replyText = `${truncateOutput(answer)}\n\n---\n${MENU_TEXT}`;
+    return Response.json({ text: replyText });
   }
 
-  const action = parseAction(text);
-  if (!action) {
-    return Response.json({
-      text: "请发送 Slack 链接，或在读取链接后回复：1 总结 / 2 翻译 / 3 起草回复",
-    });
+  // ---- No URL: shortcut or free-form follow-up ----
+  const session = await getSession(env.CTXD_SESSIONS, ILINK_SCOPE, userId);
+  if (!session) {
+    return Response.json({ text: SEND_LINK_TEXT });
   }
 
-  const contextId = await getLatestContextId(env.CTXD_SESSIONS, ILINK_SCOPE, userId);
-  if (!contextId) return Response.json({ text: NO_CONTEXT_TEXT });
-  const context = await getContext(env.CTXD_SESSIONS, contextId);
-  if (!context) return Response.json({ text: NO_CONTEXT_TEXT });
+  // Expand shortcut or pass through
+  const userMessage = SHORTCUT_MAP[text] ?? text;
+  session.messages.push({ role: "user", content: userMessage });
 
+  // Check size
+  const totalChars = session.messages.reduce((n, m) => n + m.content.length, 0);
+  if (totalChars > MAX_SESSION_CHARS) {
+    return Response.json({ text: SESSION_TOO_LONG_TEXT });
+  }
+
+  let answer: string;
   try {
-    const answer = await runAction(env, context, action);
-    return Response.json({ text: truncateOutput(answer) });
+    answer = await chat(env, session.messages, { temperature: 0.2 });
   } catch (e) {
     console.error("llm call failed", e);
+    // Remove the failed user turn so session stays consistent
+    session.messages.pop();
+    await putSession(env.CTXD_SESSIONS, ILINK_SCOPE, userId, session);
     return Response.json({ text: LLM_FAILED_TEXT });
   }
+
+  session.messages.push({ role: "assistant", content: answer });
+  await putSession(env.CTXD_SESSIONS, ILINK_SCOPE, userId, session);
+
+  return Response.json({ text: truncateOutput(answer) });
 }
 
 export default {
