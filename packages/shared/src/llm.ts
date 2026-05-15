@@ -29,6 +29,7 @@ export async function chat(
     model: env.LLM_MODEL,
     messages,
     temperature: opts.temperature ?? 0.3,
+    enable_thinking: false,
   };
   if (opts.maxTokens !== undefined) body.max_tokens = opts.maxTokens;
 

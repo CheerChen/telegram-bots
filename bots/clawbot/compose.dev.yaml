@@ -18,7 +18,6 @@ services:
       CLAW_DATA_DIR: /app/bots/clawbot/data
       ILINK_BOT_TYPE: "${ILINK_BOT_TYPE:-3}"
       CLAW_BOT_AGENT: "${CLAW_BOT_AGENT:-clawbot-dev/0.1.0}"
-      WORKER_URL_KATAKANA: "${WORKER_URL_KATAKANA:-}"
       WORKER_URL_CTXD: "${WORKER_URL_CTXD:-}"
       CLAW_WORKER_SECRET: "${CLAW_WORKER_SECRET:-}"
     ports:

@@ -1,7 +1,6 @@
 import { mkdir } from "node:fs/promises";
 
 import { loadConfig } from "./config.ts";
-import { SessionStore } from "./sessions.ts";
 import { ClawState } from "./state.ts";
 import { startWebServer } from "./web/server.ts";
 
@@ -9,10 +8,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   await mkdir(config.dataDir, { recursive: true });
 
-  const sessions = new SessionStore(config.sessionsPath);
-  await sessions.load();
-
-  const state = new ClawState(config, sessions);
+  const state = new ClawState(config);
   const web = await startWebServer({ state, port: config.port, host: config.host });
 
   await state.boot();
