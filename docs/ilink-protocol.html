@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>clawbot ↔ ctxd worker 交互协议</title>
+        <style>
+  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --accent: #58a6ff; --green: #3fb950; --orange: #d29922; --red: #f85149; --purple: #bc8cff; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'SF Pro Text', sans-serif; background: var(--bg); color: var(--text); padding: 32px; line-height: 1.6; max-width: 1100px; margin: 0 auto; }
+  h1 { color: var(--accent); font-size: 1.6em; margin-bottom: 8px; }
+  h2 { color: var(--green); font-size: 1.2em; margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { color: var(--orange); font-size: 1em; margin: 20px 0 8px; }
+  .subtitle { color: #8b949e; margin-bottom: 24px; }
+  .section { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 16px 0; }
+  .flow { display: flex; align-items: stretch; gap: 0; margin: 20px 0; }
+  .box { border-radius: 8px; padding: 14px 18px; flex: 1; min-width: 0; }
+  .box-pi { background: #1a2332; border: 2px solid var(--accent); }
+  .box-cf { background: #1a2a1a; border: 2px solid var(--green); }
+  .box-kv { background: #2a1a2a; border: 2px solid var(--purple); }
+  .arrow { display: flex; align-items: center; justify-content: center; padding: 0 8px; color: var(--orange); font-size: 1.4em; min-width: 40px; }
+  .box-label { font-weight: 600; font-size: 0.85em; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+  .box-pi .box-label { color: var(--accent); }
+  .box-cf .box-label { color: var(--green); }
+  .box-kv .box-label { color: var(--purple); }
+  code { background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; color: #f0f6fc; }
+  pre { background: #21262d; padding: 14px; border-radius: 6px; overflow-x: auto; font-size: 0.85em; line-height: 1.5; margin: 8px 0; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; font-weight: 600; margin-right: 4px; }
+  .tag-current { background: #1f3d2a; color: var(--green); }
+  .tag-new { background: #3d2a1f; color: var(--orange); }
+  .tag-unchanged { background: #1f2a3d; color: var(--accent); }
+  .diff { border-left: 3px solid var(--orange); padding-left: 14px; margin: 10px 0; }
+  .pain { background: #2d1b1b; border: 1px solid #f8514933; border-radius: 6px; padding: 12px; margin: 8px 0; }
+  .pain::before { content: "⚠ 痛点"; color: var(--red); font-weight: 600; display: block; margin-bottom: 4px; }
+  .good { background: #1b2d1b; border: 1px solid #3fb95033; border-radius: 6px; padding: 12px; margin: 8px 0; }
+  .good::before { content: "✓ 已解耦"; color: var(--green); font-weight: 600; display: block; margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+  th, td { text-align: left; padding: 8px 12px; border: 1px solid var(--border); }
+  th { background: #21262d; color: var(--accent); font-weight: 600; }
+  .seq { counter-reset: step; }
+  .seq li { list-style: none; position: relative; padding-left: 36px; margin: 8px 0; }
+  .seq li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; width: 24px; height: 24px; background: var(--accent); color: var(--bg); border-radius: 50%; text-align: center; line-height: 24px; font-size: 0.8em; font-weight: 700; }
+</style>
+    </head>
+    <body>
+
+        <h1>clawbot (Pi) ↔ ctxd worker (CF) 交互协议</h1>
+        <p class="subtitle">解耦分析：如何做到 deploy worker 不影响 Pi</p>
+
+        <!-- ======================== CURRENT STATE ======================== -->
+
+        <h2>一、当前协议（已有实现）</h2>
+
+        <div class="section">
+            <h3>HTTP 接口</h3>
+            <pre>POST {WORKER_URL_CTXD}/ilink
+Headers:  x-claw-secret: {shared_secret}
+          content-type: application/json
+Body:     { "userId": "wxid_xxx", "text": "用户发的原始文本" }
+
+Response: { "text": "回复文本" }
+       or { "error": "错误信息" }</pre>
+
+            <div class="flow">
+                <div class="box box-pi">
+                    <div class="box-label">clawbot (Pi)</div>
+                    <ul style="font-size:0.9em;">
+                        <li>ilink 长轮询收微信消息</li>
+                        <li>router 拦截 <code>/r</code> → 转成
+                            <code>/reset</code></li>
+                        <li>调用 <code>callCtxd({userId, text})</code></li>
+                        <li>把 response.text 发回微信</li>
+                    </ul>
+                </div>
+                <div class="arrow">→<br>POST<br>←<br>JSON</div>
+                <div class="box box-cf">
+                    <div class="box-label">ctxd worker (CF)</div>
+                    <ul style="font-size:0.9em;">
+                        <li>URL 检测 → Slack fetch → KV 缓存</li>
+                        <li>数字 1/2/3 → 解析 action</li>
+                        <li>调用 LLM → 返回结果</li>
+                        <li>所有业务逻辑在这里</li>
+                    </ul>
+                </div>
+                <div class="arrow">↔</div>
+                <div class="box box-kv">
+                    <div class="box-label">KV Storage</div>
+                    <ul style="font-size:0.9em;">
+                        <li><code>ctx:{id}</code> → CachedContext</li>
+                        <li><code>latest:ilink:{userId}</code> → contextId</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="good">
+                <strong>clawbot 是一个"哑管道"</strong>——它不理解消息内容，只做三件事：收消息 → 转发给
+                worker → 把 worker 的回复发回去。所有业务逻辑（URL 识别、快捷键解析、session 管理、LLM
+                调用）全在 worker 侧。
+            </div>
+        </div>
+
+        <!-- ======================== DECOUPLE ANALYSIS ======================== -->
+
+        <h2>二、解耦分析</h2>
+
+        <div class="section">
+            <h3>协议接触面（coupling surface）</h3>
+            <table>
+                <tr><th>维度</th><th>Pi 关心什么</th><th>Worker
+                        关心什么</th><th>耦合度</th></tr>
+                <tr><td>请求格式</td><td><code>{userId, text}</code></td><td>解析
+                        userId + text</td><td style="color:var(--green)">极低 —
+                        最小化</td></tr>
+                <tr><td>响应格式</td><td>当前只读 <code>.text</code></td><td>返回
+                        <code>{text}</code></td><td
+                        style="color:var(--green)">极低</td></tr>
+                <tr><td>鉴权</td><td>发 header</td><td>验 header</td><td
+                        style="color:var(--green)">零耦合</td></tr>
+                <tr><td>命令解析</td><td><code>/r</code>→<code>/reset</code></td><td>识别
+                        <code>/reset</code></td><td
+                        style="color:var(--orange)">轻微 — Pi 做了一层翻译</td></tr>
+                <tr><td>消息条数</td><td>当前：1 条进 1 条出</td><td>新需求：1 条进 N 条出</td><td
+                        style="color:var(--red)"><strong>需要改</strong></td></tr>
+            </table>
+
+            <div class="pain">
+                <strong>唯一需要改 Pi 的地方：响应从单条变多条。</strong><br>
+                当前 <code>{ text: string }</code> → 改为 <code>{ messages: string[]
+                    }</code>。<br>
+                这是一次性改动，改完后 worker 可以自由决定返回几条消息，Pi 只管逐条发送。
+            </div>
+
+            <h3>改动方案</h3>
+            <div class="diff">
+                <strong>Pi 侧（一次性改动，之后不再动）：</strong>
+                <pre>// handlers/ctxd.ts 响应处理
+interface CtxdResponse {
+  messages?: string[];   // 新：多条消息
+  text?: string;         // 向后兼容：单条
+  error?: string;
+}
+
+// 解析逻辑
+const msgs = json.messages ?? (json.text ? [json.text] : []);
+for (const msg of msgs) {
+  await sendTextMessage(..., msg);
+}</pre>
+
+                <strong>Worker 侧（随时可改，任意 deploy）：</strong>
+                <pre>// 初始响应：返回 2 条
+return Response.json({
+  messages: [
+    summaryText,
+    "还需要我做什么？\n1 提取行动项\n2 翻译全文\n3 起草回复\n或直接输入任何问题"
+  ]
+});
+
+// 后续追问：返回 1 条
+return Response.json({ messages: [answer] });</pre>
+            </div>
+        </div>
+
+        <!-- ======================== NEW FLOW ======================== -->
+
+        <h2>三、新交互流程（多轮 session）</h2>
+
+        <div class="section">
+            <h3>完整时序</h3>
+            <ol class="seq">
+                <li><strong>用户发送 Slack URL #1</strong><br>
+                    Pi → Worker: <code>{userId, text:
+                        "https://xxx.slack.com/..."}</code></li>
+                <li><strong>Worker: fetch + 初始总结</strong><br>
+                    检测到 URL → Slack API 取 markdown → 存入 session sources[]<br>
+                    构造 system prompt（含 markdown）→ LLM 生成总结<br>
+                    存 session: <code>{ sources: [{url, markdown}], messages:
+                        [system, assistant] }</code></li>
+                <li><strong>Worker → Pi: 2 条消息</strong><br>
+                    <code>{ messages: ["总结内容...", "还需要我做什么？1/2/3/自由提问"]
+                        }</code></li>
+                <li><strong>用户回复 <code>2</code></strong><br>
+                    Pi → Worker: <code>{userId, text: "2"}</code></li>
+                <li><strong>Worker: 快捷键展开 + LLM</strong><br>
+                    <code>"2"</code> → 展开为 <code>"请将上述对话内容翻译为中文"</code><br>
+                    追加到 messages[] → LLM → 返回翻译结果 → 更新 session</li>
+                <li><strong>用户自由追问</strong><br>
+                    Pi → Worker: <code>{userId, text:
+                        "第三条消息里的 deadline 具体是哪天？"}</code><br>
+                    直接追加到 messages[] → LLM → 返回</li>
+                <li><strong>用户发送 Slack URL #2（追加 source）</strong><br>
+                    Worker 检测到新 URL → fetch → 追加到 sources[]<br>
+                    重建 system prompt（含所有 sources 的 markdown）<br>
+                    LLM 重新生成合并总结 → 返回</li>
+                <li><strong>用户发 <code>0</code> 或 <code>/r</code></strong><br>
+                    清空整个 session → 返回 <code>{ messages: ["已重置。请发送新链接。"]
+                        }</code></li>
+            </ol>
+        </div>
+
+        <div class="section">
+            <h3>KV 中的 Session 结构</h3>
+            <pre>// key: "session:ilink:{userId}"
+{
+  "sources": [
+    { "url": "https://slack.com/...", "markdown": "# Thread...", "fetchedAt": "..." },
+    { "url": "https://slack.com/...", "markdown": "# Thread...", "fetchedAt": "..." }
+  ],
+  "messages": [
+    { "role": "system",    "content": "你是工作助手。以下是上下文...(所有sources拼接)" },
+    { "role": "assistant", "content": "总结内容..." },
+    { "role": "user",      "content": "请将上述对话内容翻译为中文" },
+    { "role": "assistant", "content": "翻译结果..." },
+    { "role": "user",      "content": "deadline 是哪天？" },
+    { "role": "assistant", "content": "根据第三条消息..." }
+  ],
+  "createdAt": "...",
+  "updatedAt": "..."
+}</pre>
+            <p style="margin-top:10px; font-size:0.9em; color:#8b949e;">
+                追加新 source 时：更新 sources[] → 重建 messages[0] (system prompt) →
+                保留对话历史
+            </p>
+        </div>
+
+        <!-- ======================== SHORTCUT MAPPING ======================== -->
+
+        <h2>四、快捷键映射表（语法糖）</h2>
+
+        <div class="section">
+            <table>
+                <tr><th>用户输入</th><th>展开为（追加到 messages 的 user
+                        turn）</th><th>说明</th></tr>
+                <tr><td><code>1</code></td><td>"请列出需要我关注或行动的事项"</td><td>行动项提取（初始已有总结，这个互补）</td></tr>
+                <tr><td><code>2</code></td><td>"请将上述对话内容翻译为中文"</td><td>全文翻译</td></tr>
+                <tr><td><code>3</code></td><td>"请帮我起草一个日语回复，提供三个版本：简短随意版、礼貌正式版、确认提问版"</td><td>起草回复</td></tr>
+                <tr><td><code>0</code></td><td>— (不经过 LLM)</td><td>重置
+                        session</td></tr>
+                <tr><td>其他文本</td><td>原样透传</td><td>自由追问</td></tr>
+            </table>
+            <p style="margin-top:10px; font-size:0.9em; color:#8b949e;">
+                LLM 永远只看到展开后的自然语言，不知道快捷键的存在。<br>
+                展开文本可以在 worker 侧随时修改，无需改 Pi。
+            </p>
+        </div>
+
+        <!-- ======================== DEPLOY STORY ======================== -->
+
+        <h2>五、部署独立性</h2>
+
+        <div class="section">
+            <table>
+                <tr><th>改什么</th><th>需要 deploy</th><th>Pi 是否受影响</th></tr>
+                <tr><td>快捷键展开文本</td><td>Worker only</td><td
+                        style="color:var(--green)">不影响</td></tr>
+                <tr><td>System prompt / 角色设定</td><td>Worker only</td><td
+                        style="color:var(--green)">不影响</td></tr>
+                <tr><td>新增快捷键 4/5/6</td><td>Worker only</td><td
+                        style="color:var(--green)">不影响</td></tr>
+                <tr><td>换 LLM 模型</td><td>Worker only</td><td
+                        style="color:var(--green)">不影响</td></tr>
+                <tr><td>Session token 上限调整</td><td>Worker only</td><td
+                        style="color:var(--green)">不影响</td></tr>
+                <tr><td>支持新 source 类型</td><td>Worker only</td><td
+                        style="color:var(--green)">不影响</td></tr>
+                <tr><td>菜单提示文案</td><td>Worker only</td><td
+                        style="color:var(--green)">不影响</td></tr>
+                <tr><td style="color:var(--orange)">响应改为 messages[]</td><td
+                        style="color:var(--orange)">两边各一次</td><td
+                        style="color:var(--orange)">一次性改动</td></tr>
+            </table>
+
+            <div class="good">
+                <strong>Pi 改一次之后，成为永久的哑管道。</strong>所有业务逻辑迭代只需 <code>wrangler
+                    deploy</code>。<br><br>
+                协议契约：<code>POST {userId, text} → {messages:
+                    string[]}</code>，这个接口足够稳定，不会再变。
+            </div>
+        </div>
+
+        <!-- ======================== TOKEN MGMT ======================== -->
+
+        <h2>六、Token 管理策略</h2>
+
+        <div class="section">
+            <pre>MAX_SESSION_CHARS = 200_000   // ≈ 100K~130K tokens (qwen flash)
+                              // qwen3.6 flash context: 最大 131K tokens
+
+每次 LLM 调用前:
+  total = system_prompt.length + Σ messages[].content.length
+  if total > MAX_SESSION_CHARS:
+    return { messages: ["对话过长，请发 0 重置或发送新链接开始新会话。"] }
+    
+新链接 = 自动开新 session（旧 session 丢弃）
+0 或 /r = 显式重置</pre>
+        </div>
+
+    </body>
+</html>
