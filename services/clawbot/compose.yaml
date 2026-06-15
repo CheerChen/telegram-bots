@@ -10,7 +10,7 @@ services:
     environment:
       CLAW_PORT: "8080"
       CLAW_HOST: "0.0.0.0"
-      CLAW_DATA_DIR: /app/bots/clawbot/data
+      CLAW_DATA_DIR: /app/services/clawbot/data
       ILINK_BOT_TYPE: "${ILINK_BOT_TYPE:-3}"
       CLAW_BOT_AGENT: "${CLAW_BOT_AGENT:-clawbot/0.1.0}"
       WORKER_URL_CTXD: "${WORKER_URL_CTXD:-}"
@@ -19,7 +19,7 @@ services:
       - "${CLAW_HOST_PORT:-8765}:8080"
     volumes:
       # Pi 上请改成绝对路径，例如 /opt/clawbot/data
-      - /opt/clawbot/data:/app/bots/clawbot/data
+      - /opt/clawbot/data:/app/services/clawbot/data
     logging:
       driver: json-file
       options:
