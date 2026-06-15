@@ -10,7 +10,7 @@ FROM base AS deps
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/ilink/package.json packages/ilink/
 COPY packages/shared/package.json packages/shared/
-COPY bots/clawbot/package.json bots/clawbot/
+COPY services/clawbot/package.json services/clawbot/
 COPY bots/katakana/package.json bots/katakana/
 COPY bots/xvideo/package.json bots/xvideo/
 COPY bots/ctxd/package.json bots/ctxd/
@@ -20,17 +20,17 @@ RUN pnpm install --frozen-lockfile --filter clawbot...
 FROM base AS runtime
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/ilink/node_modules ./packages/ilink/node_modules
-COPY --from=deps /app/bots/clawbot/node_modules ./bots/clawbot/node_modules
+COPY --from=deps /app/services/clawbot/node_modules ./services/clawbot/node_modules
 COPY tsconfig.base.json package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/ilink ./packages/ilink
-COPY bots/clawbot ./bots/clawbot
+COPY services/clawbot ./services/clawbot
 
 ENV NODE_ENV=production \
     CLAW_PORT=8080 \
     CLAW_HOST=0.0.0.0 \
-    CLAW_DATA_DIR=/app/bots/clawbot/data
+    CLAW_DATA_DIR=/app/services/clawbot/data
 
-WORKDIR /app/bots/clawbot
+WORKDIR /app/services/clawbot
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

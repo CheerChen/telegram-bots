@@ -6,13 +6,20 @@ Monorepo for personal Telegram bots deployed on Cloudflare Workers.
 
 ```
 packages/shared/    # Telegram client, webhook auth, shared types
+packages/ilink/     # WeChat (ilink) bot protocol — QR login, polling, messaging
 bots/katakana/      # CN/EN word -> Japanese / Katakana (Jisho API)
 bots/ctxd/          # Slack link -> summarize / translate / draft reply
+services/clawbot/   # WeChat -> ctxd gateway; long-running daemon on a Raspberry Pi
 ```
 
 Each bot under `bots/` is an independent Cloudflare Worker with its own
-`wrangler.toml`, secrets, and KV bindings. Shared code lives in
-`packages/shared` and is consumed via pnpm workspace protocol.
+`wrangler.toml`, secrets, and KV bindings. Shared code lives in `packages/*`
+and is consumed via pnpm workspace protocol.
+
+`services/` holds long-running processes that are **not** Cloudflare Workers.
+`services/clawbot` is a Node daemon (Docker image, deployed on a Raspberry Pi
+via Portainer) that bridges WeChat to the ctxd worker's `/ilink` endpoint — see
+its `Makefile` and `compose.yaml` rather than `wrangler`.
 
 ## Prereqs
 

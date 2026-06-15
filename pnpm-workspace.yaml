@@ -1,6 +1,7 @@
 packages:
   - "packages/*"
   - "bots/*"
+  - "services/*"
 allowBuilds:
   esbuild: true
   sharp: true
