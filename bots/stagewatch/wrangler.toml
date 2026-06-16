@@ -1,0 +1,15 @@
+name = "stagewatch-bot"
+main = "src/index.ts"
+compatibility_date = "2026-06-16"
+
+[triggers]
+crons = ["7 22 * * *"]
+
+[[kv_namespaces]]
+binding = "STAGEWATCH_STATE"
+id = "f0ae6f7e73a24cf8b001e270ad36247c"
+
+# Secrets (set via `pnpm secrets:push` after filling .dev.vars):
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_CHAT_ID
+#   STAGEWATCH_ADMIN_SECRET   optional; enables POST /run
