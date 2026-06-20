@@ -7,7 +7,10 @@
     "katakana:dev": "pnpm --filter katakana-bot dev",
     "katakana:deploy": "pnpm --filter katakana-bot deploy",
     "stagewatch:dev": "pnpm --filter stagewatch-bot dev",
-    "stagewatch:deploy": "pnpm --filter stagewatch-bot deploy"
+    "stagewatch:deploy": "pnpm --filter stagewatch-bot deploy",
+    "stake-odds:dev": "pnpm --filter stake-odds dev",
+    "stake-odds:start": "pnpm --filter stake-odds start",
+    "stake-odds:typecheck": "pnpm --filter stake-odds typecheck"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",

@@ -1,0 +1,34 @@
+# Deployment compose — pasted into Dockge/Portainer's Stack editor on the Pi.
+# No `build:` block: the Pi pulls the image from the private registry.
+# For local Docker iteration, use compose.dev.yaml instead.
+
+services:
+  stake-odds:
+    image: ${REGISTRY_URL:-192.168.0.110:5000}/stake-odds:${TAG:-latest}
+    container_name: stake-odds
+    restart: unless-stopped
+    environment:
+      STAKE_ODDS_PORT: "8080"
+      STAKE_ODDS_HOST: "0.0.0.0"
+      STAKE_ODDS_DATA_DIR: /app/services/stake-odds/data
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      TELEGRAM_MESSAGE_THREAD_ID: "${TELEGRAM_MESSAGE_THREAD_ID:-}"
+      STAKE_ACCESS_TOKEN: "${STAKE_ACCESS_TOKEN:-}"
+      STAKE_CF_CLEARANCE: "${STAKE_CF_CLEARANCE:-}"
+      STAKE_USER_AGENT: "${STAKE_USER_AGENT:-}"
+      STAKE_SESSION_COOKIE: "${STAKE_SESSION_COOKIE:-}"
+      TOURNAMENT_KEYWORD: "${TOURNAMENT_KEYWORD:-world cup,世界杯,fifa}"
+      ODDS_CHANGE_THRESHOLD: "${ODDS_CHANGE_THRESHOLD:-0.10}"
+      POLL_INTERVAL_MS: "${POLL_INTERVAL_MS:-600000}"
+      JITTER_MAX_MS: "${JITTER_MAX_MS:-90000}"
+    ports:
+      - "${STAKE_ODDS_HOST_PORT:-8766}:8080"
+    volumes:
+      # Pi 上请改成绝对路径，例如 /opt/stake-odds/data
+      - /opt/stake-odds/data:/app/services/stake-odds/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
