@@ -14,6 +14,7 @@ export interface SendMessageOptions {
   chatId: number | string;
   text: string;
   replyToMessageId?: number;
+  messageThreadId?: number;
   disableWebPagePreview?: boolean;
   parseMode?: ParseMode;
   replyMarkup?: InlineKeyboardMarkup;
@@ -55,6 +56,7 @@ export async function sendMessage(token: string, opts: SendMessageOptions): Prom
     text: opts.text,
   };
   if (opts.replyToMessageId !== undefined) body.reply_to_message_id = opts.replyToMessageId;
+  if (opts.messageThreadId !== undefined) body.message_thread_id = opts.messageThreadId;
   if (opts.disableWebPagePreview) body.disable_web_page_preview = true;
   if (opts.parseMode) body.parse_mode = opts.parseMode;
   if (opts.replyMarkup) body.reply_markup = opts.replyMarkup;
