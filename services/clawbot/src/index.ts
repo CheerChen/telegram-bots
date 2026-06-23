@@ -6,7 +6,12 @@ import { startWebServer } from "./web/server.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  await mkdir(config.dataDir, { recursive: true });
+  await Promise.all([
+    mkdir(config.dataDir, { recursive: true }),
+    mkdir(config.sessionDir, { recursive: true }),
+    mkdir(config.captureDir, { recursive: true }),
+    mkdir(config.mediaDir, { recursive: true }),
+  ]);
 
   const state = new ClawState(config);
   const web = await startWebServer({ state, port: config.port, host: config.host });

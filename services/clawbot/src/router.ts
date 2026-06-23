@@ -2,14 +2,32 @@ import { extractText, sendTextMessage } from "ilink/protocol";
 import type { WeixinMessage } from "ilink/types";
 
 import type { ClawConfig } from "./config.ts";
-import { callCtxd } from "./handlers/ctxd.ts";
+import {
+  handleImageMessage,
+  handleChatMessage,
+  maybeCaptureStructuredMessage,
+  resetChatSession,
+} from "./handlers/chat.ts";
 import type { HandlerName } from "./state.ts";
 
 const LOG_TEXT_MAX = 80;
+const BATCH_DELAY_MS = 2_500;
 
-const CMD_ENTER_CTXD = "/c";
-const CMD_EXIT = "/q";
+const CMD_HELP = "/help";
 const CMD_RESET = "/r";
+const CMD_RESET_LONG = "/reset";
+const CMD_NEW = "/new";
+const CMD_SWITCH_SESSION = "0";
+
+interface PendingBatch {
+  ctx: RouterContext;
+  fromUserId: string;
+  contextToken: string | undefined;
+  texts: string[];
+  timer: NodeJS.Timeout;
+}
+
+const pendingBatches = new Map<string, PendingBatch>();
 
 function logLine(mode: string, from: string, text: string, result: string, ms?: number): void {
   const t = text.length > LOG_TEXT_MAX ? `${text.slice(0, LOG_TEXT_MAX)}…` : text;
@@ -36,30 +54,56 @@ export async function routeMessage(
   if (message.message_type === 2) return;
   const fromUserId = message.from_user_id?.trim();
   if (!fromUserId) return;
+
   const text = extractText(message);
-  if (!text) return;
+  const contextToken = message.context_token;
+  const capture = await maybeCaptureStructuredMessage(ctx.config, message, text);
+  if (capture) {
+    console.log(`[capture] from=${fromUserId} id=${capture.id} reason=${capture.reason} ${capture.summary}`);
+  }
+  if (!text) {
+    const handledImage = await handleImageIfPresent(ctx, fromUserId, message, contextToken);
+    if (handledImage) return;
+    await sendText(
+      ctx,
+      fromUserId,
+      "这条消息不是纯文本，我已经记下原始结构了。当前版本请先发文字消息。",
+      contextToken,
+    );
+    ctx.recordHandlerCall("chat", "error", 0, capture ? `unsupported message captured as ${capture.id}` : "unsupported message");
+    logLine("chat", fromUserId, "[non-text]", capture ? `unsupported:${capture.id}` : "unsupported");
+    return;
+  }
 
   const trimmed = text.trim();
-  const contextToken = message.context_token;
+  if (!trimmed) return;
 
-  if (trimmed === CMD_ENTER_CTXD) {
-    await sendText(ctx, fromUserId, "已默认处于 ctxd 模式，请直接发送 Slack 链接。", contextToken);
-    logLine("cmd", fromUserId, trimmed, "ctxd-default");
+  if (trimmed === CMD_HELP) {
+    await sendText(
+      ctx,
+      fromUserId,
+      "直接发文字给我就行。我会短暂等待一批连续消息后再统一处理；回复过长时会自动拆成多条。发送 /r、/reset、/new 或 0 可以清空当前会话。",
+      contextToken,
+    );
+    logLine("cmd", fromUserId, trimmed, "help");
     return;
   }
 
-  if (trimmed === CMD_EXIT) {
-    await sendText(ctx, fromUserId, "当前只支持 ctxd，无法退出。", contextToken);
-    logLine("cmd", fromUserId, trimmed, "exit-disabled");
+  if (
+    trimmed === CMD_RESET ||
+    trimmed === CMD_RESET_LONG ||
+    trimmed === CMD_NEW ||
+    trimmed === CMD_SWITCH_SESSION
+  ) {
+    clearPendingBatch(fromUserId);
+    await resetChatSession(ctx.config, fromUserId);
+    await sendText(ctx, fromUserId, "已清空当前会话。", contextToken);
+    ctx.recordHandlerCall("chat", "ok", 0);
+    logLine("cmd", fromUserId, trimmed, "reset");
     return;
   }
 
-  if (trimmed === CMD_RESET) {
-    await handleCtxd(ctx, fromUserId, "/reset", contextToken);
-    return;
-  }
-
-  await handleCtxd(ctx, fromUserId, text, contextToken);
+  scheduleChatBatch(ctx, fromUserId, text, contextToken);
 }
 
 async function sendText(
@@ -78,27 +122,106 @@ async function sendText(
   });
 }
 
-async function handleCtxd(
+async function sendMessages(
+  ctx: RouterContext,
+  toUserId: string,
+  messages: string[],
+  contextToken: string | undefined,
+): Promise<void> {
+  for (const message of messages) {
+    await sendText(ctx, toUserId, message, contextToken);
+  }
+}
+
+async function handleImageIfPresent(
+  ctx: RouterContext,
+  fromUserId: string,
+  message: WeixinMessage,
+  contextToken: string | undefined,
+): Promise<boolean> {
+  const hasImage = (message.item_list ?? []).some((item) => (item as { type?: number }).type === 2);
+  if (!hasImage) return false;
+
+  const t0 = Date.now();
+  const result = await handleImageMessage(ctx.config, fromUserId, message);
+  const ms = Date.now() - t0;
+  await sendMessages(ctx, fromUserId, result.messages, contextToken);
+  ctx.recordHandlerCall("chat", result.ok ? "ok" : "error", ms, result.error);
+  logLine("image", fromUserId, "[image]", result.ok ? "ok" : `error: ${result.error}`, ms);
+  return true;
+}
+
+function scheduleChatBatch(
   ctx: RouterContext,
   fromUserId: string,
   text: string,
   contextToken: string | undefined,
-): Promise<void> {
-  if (!ctx.config.workers.ctxd || !ctx.config.workerSecret) {
-    const msg = "ctxd 未配置：缺 WORKER_URL_CTXD 或 CLAW_WORKER_SECRET";
-    await sendText(ctx, fromUserId, msg, contextToken);
-    ctx.recordHandlerCall("ctxd", "error", 0, "not configured");
-    logLine("ctxd", fromUserId, text, "not configured");
+): void {
+  const pending = pendingBatches.get(fromUserId);
+  if (pending) {
+    pending.texts.push(text.trim());
+    pending.contextToken = contextToken ?? pending.contextToken;
+    pending.ctx = ctx;
+    clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      void flushChatBatch(fromUserId);
+    }, BATCH_DELAY_MS);
+    logLine("batch", fromUserId, text, `queued:${pending.texts.length}`);
     return;
   }
+
+  const timer = setTimeout(() => {
+    void flushChatBatch(fromUserId);
+  }, BATCH_DELAY_MS);
+  pendingBatches.set(fromUserId, {
+    ctx,
+    fromUserId,
+    contextToken,
+    texts: [text.trim()],
+    timer,
+  });
+  logLine("batch", fromUserId, text, "queued:1");
+}
+
+function clearPendingBatch(fromUserId: string): void {
+  const pending = pendingBatches.get(fromUserId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingBatches.delete(fromUserId);
+}
+
+async function flushChatBatch(fromUserId: string): Promise<void> {
+  const pending = pendingBatches.get(fromUserId);
+  if (!pending) return;
+  pendingBatches.delete(fromUserId);
+  clearTimeout(pending.timer);
+
+  const text = combineBatchTexts(pending.texts);
+  await handleChat(pending.ctx, pending.fromUserId, text, pending.contextToken, pending.texts.length);
+}
+
+function combineBatchTexts(texts: string[]): string {
+  if (texts.length <= 1) return texts[0] ?? "";
+  return texts.join("\n\n");
+}
+
+async function handleChat(
+  ctx: RouterContext,
+  fromUserId: string,
+  text: string,
+  contextToken: string | undefined,
+  batchSize = 1,
+): Promise<void> {
   const t0 = Date.now();
-  const result = await callCtxd(
-    { workerUrl: ctx.config.workers.ctxd, secret: ctx.config.workerSecret },
+  const result = await handleChatMessage(ctx.config, fromUserId, text);
+  const ms = Date.now() - t0;
+  await sendMessages(ctx, fromUserId, result.messages, contextToken);
+  ctx.recordHandlerCall("chat", result.ok ? "ok" : "error", ms, result.error);
+  logLine(
+    "chat",
     fromUserId,
     text,
+    result.ok ? `ok:${result.messages.length}:batch=${batchSize}` : `error: ${result.error}:batch=${batchSize}`,
+    ms,
   );
-  const ms = Date.now() - t0;
-  await sendText(ctx, fromUserId, result.text || "(空响应)", contextToken);
-  ctx.recordHandlerCall("ctxd", result.ok ? "ok" : "error", ms, result.ok ? undefined : result.text);
-  logLine("ctxd", fromUserId, text, result.ok ? "ok" : `error: ${result.text}`, ms);
 }

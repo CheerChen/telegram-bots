@@ -11,7 +11,7 @@ import { routeMessage, type RouterContext } from "./router.ts";
 
 export type ClawStatus = "auth-required" | "authing" | "running";
 export type AuthReason = "initial" | "expired" | "manual-reset";
-export type HandlerName = "ctxd";
+export type HandlerName = "chat";
 
 export interface HandlerStats {
   configured: boolean;
@@ -53,7 +53,7 @@ export class ClawState {
 
   constructor(private readonly config: ClawConfig) {
     this.handlerStats = {
-      ctxd: { configured: this.isHandlerConfigured("ctxd"), invocations: 0 },
+      chat: { configured: this.isHandlerConfigured("chat"), invocations: 0 },
     };
   }
 
@@ -82,8 +82,14 @@ export class ClawState {
   }
 
   private isHandlerConfigured(name: HandlerName): boolean {
-    if (!this.config.workerSecret) return false;
-    return Boolean(this.config.workers[name]);
+    if (name === "chat") {
+      return Boolean(
+        this.config.llmBaseUrl &&
+        this.config.llmApiKey &&
+        this.config.llmModel,
+      );
+    }
+    return false;
   }
 
   async boot(): Promise<void> {

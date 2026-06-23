@@ -6,8 +6,14 @@ export interface ClawConfig {
   dataDir: string;
   tokenPath: string;
   heartbeatPath: string;
+  sessionDir: string;
+  captureDir: string;
+  mediaDir: string;
   botType: string | undefined;
   botAgent: string;
+  llmBaseUrl: string | undefined;
+  llmApiKey: string | undefined;
+  llmModel: string | undefined;
   workerSecret: string | undefined;
   workers: {
     ctxd: string | undefined;
@@ -22,8 +28,14 @@ export function loadConfig(): ClawConfig {
     dataDir,
     tokenPath: resolve(dataDir, "token.json"),
     heartbeatPath: resolve(dataDir, "heartbeat"),
+    sessionDir: resolve(dataDir, "sessions"),
+    captureDir: resolve(dataDir, "captures"),
+    mediaDir: resolve(dataDir, "media"),
     botType: process.env.ILINK_BOT_TYPE?.trim() || undefined,
     botAgent: process.env.CLAW_BOT_AGENT?.trim() || "clawbot/0.1.0",
+    llmBaseUrl: process.env.LLM_BASE_URL?.trim() || undefined,
+    llmApiKey: process.env.LLM_API_KEY?.trim() || undefined,
+    llmModel: process.env.LLM_MODEL?.trim() || undefined,
     workerSecret: process.env.CLAW_WORKER_SECRET?.trim() || undefined,
     workers: {
       ctxd: process.env.WORKER_URL_CTXD?.trim() || undefined,
