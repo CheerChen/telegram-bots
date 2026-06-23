@@ -39,7 +39,7 @@ query SportIndex($sport: String!, $group: String!, $type: SportSearchEnum = popu
           name
           templates(limit: 10, includeEmpty: true) {
             name
-            markets(limit: 1) {
+            markets(limit: 20) {
               name
               status
               outcomes {
@@ -145,13 +145,28 @@ function parseMarkets(groups: Group[] | undefined): MarketLine[] {
   const templates = group?.templates ?? [];
   const lines: MarketLine[] = [];
   for (const tp of templates) {
-    const market = tp.markets?.[0];
-    const outcomes = market?.outcomes ?? [];
-    if (!tp.name || outcomes.length === 0) continue;
-    const parsed = outcomes
-      .filter((o) => typeof o.odds === "number" && Number.isFinite(o.odds))
-      .map((o) => ({ name: o.name ?? "", odds: o.odds as number }));
-    if (parsed.length > 0) lines.push({ template: tp.name, outcomes: parsed });
+    if (!tp.name) continue;
+    const markets = tp.markets ?? [];
+    if (markets.length === 0) continue;
+
+    // Each template may have multiple market lines (different handicap
+    // values, different over/under thresholds). Pick the most balanced one:
+    // the line whose active odds have the smallest spread (max - min).
+    // This matches what the Stake web UI shows as the "main" line.
+    let best: { outcomes: { name: string; odds: number }[]; spread: number } | null = null;
+    for (const market of markets) {
+      const raw = (market.outcomes ?? [])
+        .filter((o) => o.active !== false && typeof o.odds === "number" && Number.isFinite(o.odds) && o.odds > 1)
+        .map((o) => ({ name: o.name ?? "", odds: o.odds as number }));
+      if (raw.length < 2) continue;
+      const odds = raw.map((o) => o.odds);
+      const spread = Math.max(...odds) - Math.min(...odds);
+      if (best === null || spread < best.spread) {
+        best = { outcomes: raw, spread };
+      }
+    }
+
+    if (best) lines.push({ template: tp.name, outcomes: best.outcomes });
   }
   return lines;
 }
