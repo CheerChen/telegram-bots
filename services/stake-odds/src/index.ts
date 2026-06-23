@@ -63,6 +63,7 @@ async function main(): Promise<void> {
         `live=${stats.live}`,
         `finished=${stats.finished}`,
         `seeded=${stats.seeded}`,
+        `edited=${stats.edited}`,
         `notified=${stats.notified}`,
         `idle=${stats.idle}`,
         `credAlert=${stats.credentialAlert}`,
