@@ -75,7 +75,7 @@ export function loadConfig(): StakeOddsConfig {
     group: optional("GROUP", "threeway"),
 
     tournamentKeywords: csv(optional("TOURNAMENT_KEYWORD", "world cup,世界杯,fifa")),
-    oddsChangeThreshold: parseFloat(optional("ODDS_CHANGE_THRESHOLD", "0.10")),
+    oddsChangeThreshold: parseFloat(optional("ODDS_CHANGE_THRESHOLD", "0.15")),
     pollIntervalMs: parseInt(optional("POLL_INTERVAL_MS", "600000"), 10),
     jitterMaxMs: parseInt(optional("JITTER_MAX_MS", "90000"), 10),
     credentialAlertCooldownMs: parseInt(optional("CREDENTIAL_ALERT_COOLDOWN_MS", "3600000"), 10),

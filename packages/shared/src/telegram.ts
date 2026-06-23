@@ -110,6 +110,14 @@ export async function answerCallbackQuery(
   await callApi(token, "answerCallbackQuery", body);
 }
 
+export async function deleteMessage(
+  token: string,
+  chatId: number | string,
+  messageId: number,
+): Promise<void> {
+  await callApi(token, "deleteMessage", { chat_id: chatId, message_id: messageId });
+}
+
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
