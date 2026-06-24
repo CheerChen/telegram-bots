@@ -64,7 +64,9 @@ export function loadConfig(): StakeOddsConfig {
       return v ? parseInt(v, 10) : undefined;
     })(),
 
-    accessToken: required("STAKE_ACCESS_TOKEN"),
+    // Access token is optional — the SportIndex query returns public odds
+    // without authentication. cf_clearance alone is enough to pass Cloudflare.
+    accessToken: optional("STAKE_ACCESS_TOKEN", ""),
     cfClearance: required("STAKE_CF_CLEARANCE"),
     userAgent: required("STAKE_USER_AGENT"),
     sessionCookie: process.env.STAKE_SESSION_COOKIE?.trim() || undefined,

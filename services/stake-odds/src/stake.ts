@@ -209,6 +209,7 @@ export async function fetchFixtures(config: StakeOddsConfig): Promise<{ league: 
   };
   const cookies: Record<string, string> = { cf_clearance: config.cfClearance };
   if (config.sessionCookie) cookies.session = config.sessionCookie;
+  const cookieHeader = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join("; ");
 
   const payload = {
     query: SPORT_INDEX_QUERY,
@@ -218,7 +219,7 @@ export async function fetchFixtures(config: StakeOddsConfig): Promise<{ league: 
 
   const res = await fetch("https://stake.com/_api/graphql", {
     method: "POST",
-    headers,
+    headers: { ...headers, Cookie: cookieHeader },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(30000),
   });
@@ -245,7 +246,13 @@ export async function fetchFixtures(config: StakeOddsConfig): Promise<{ league: 
     throw new Error(`stake: non-JSON response (len=${text.length})`);
   }
   if (body.errors) {
-    throw new CredentialError(`stake graphql errors: ${JSON.stringify(body.errors).slice(0, 200)}`);
+    // Partial errors with data present are individual fixture failures
+    // (e.g. "出现未知错误 341063" on a single match) — transient server-side
+    // issues, not credential problems. Proceed with whatever data was returned.
+    // Only treat as a credential error when the entire data payload is missing.
+    if (body.data == null) {
+      throw new CredentialError(`stake graphql errors: ${JSON.stringify(body.errors).slice(0, 200)}`);
+    }
   }
 
   const tournament = body.data?.slugSport?.tournamentList?.[0] ?? null;
