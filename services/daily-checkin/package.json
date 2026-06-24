@@ -1,0 +1,24 @@
+{
+  "name": "daily-checkin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "auth": "tsx src/auth.ts"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.16.0",
+    "ical.js": "^1.5.0",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "typescript": "^5.6.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

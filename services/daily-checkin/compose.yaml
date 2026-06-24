@@ -1,0 +1,28 @@
+# Deployment compose — used on the Pi via `make pi-deploy` (rsync + compose up --build).
+# Builds on the Pi directly (no registry). Build context = this directory.
+
+services:
+  daily-checkin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: daily-checkin
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Tokyo
+      AUTO_SEND: "true"
+      MSAL_CACHE_PATH: /app/state/.msal_cache.json
+      MEETING_TITLE_BLACKLIST: "キャンセル済み,【#DBRE】DS"
+      MIN_MEETING_TITLE_LENGTH: "5"
+      STATE_DIR: /app/state
+      SCHEDULE_HOUR: "10"
+      SCHEDULE_MINUTE: "0"
+    volumes:
+      - ./state:/app/state
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
