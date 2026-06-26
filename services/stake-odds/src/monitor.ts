@@ -349,6 +349,23 @@ async function deleteNotifyMessages(config: StakeOddsConfig, messageIds: number[
   }
 }
 
+// Transient network-class errors — the message is fine, we just couldn't
+// reach Telegram. Keep the old messageId and retry on the next cycle.
+function isTransientNetworkError(msg: string): boolean {
+  return /fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|network|timeout|ECONNABORTED|503|502|504|gateway|temporarily unavailable/i.test(
+    msg,
+  );
+}
+
+// Telegram errors that mean the underlying message is gone or uneditable
+// (deleted, expired past 48h, invalid id). Re-seeding is the only recovery,
+// and we should delete the stale messageId first to avoid orphans.
+function isMessageGoneError(msg: string): boolean {
+  return /message to edit not found|message can't be edited|message_id_invalid|MESSAGE_ID_INVALID|message identifier is not specified|message to be edited not found/i.test(
+    msg,
+  );
+}
+
 function toSnapshot(
   fixture: Fixture,
   seededAt: string,
@@ -590,18 +607,36 @@ export async function runCycle(config: StakeOddsConfig, store: StateStore): Prom
         // "message is not modified" — content unchanged, not a real error.
         if (msg.includes("message is not modified")) {
           state.fixtures[fixture.id] = toSnapshot(fixture, prev.seededAt, true, prev.messageId, prev.lastNotifiedAt, prev);
-        } else {
+        } else if (isTransientNetworkError(msg)) {
+          // Transient — Telegram unreachable. Keep messageId, retry next cycle.
+          // Re-seeding here would leave the original message orphaned once
+          // the network recovers.
+          stats.errors.push(`edit ${fixture.id}: ${msg} (transient, keeping messageId)`);
+          state.fixtures[fixture.id] = toSnapshot(fixture, prev.seededAt, true, prev.messageId, prev.lastNotifiedAt, prev);
+        } else if (isMessageGoneError(msg)) {
+          // Terminal — the old message can't be edited (deleted, >48h old, etc).
+          // Delete the stale message (best-effort) then re-seed.
           stats.errors.push(`edit ${fixture.id}: ${msg}`);
-          // If edit fails (e.g. message too old / deleted), fall back to a
-          // new seed message and store the new message_id.
+          try {
+            await deleteMessage(config.telegramBotToken, config.telegramChatId, prev.messageId);
+          } catch {
+            // Already gone — ignore.
+          }
           try {
             const msgId = await sendSeedMessage(config, fixture, renders);
             state.fixtures[fixture.id] = toSnapshot(fixture, prev.seededAt, true, msgId, nowIso(), prev, renders);
             stats.edited += 1;
           } catch (seedErr) {
             stats.errors.push(`re-seed ${fixture.id}: ${String(seedErr)}`);
-            state.fixtures[fixture.id] = toSnapshot(fixture, prev.seededAt, true, prev.messageId, prev.lastNotifiedAt, prev);
+            state.fixtures[fixture.id] = toSnapshot(fixture, prev.seededAt, true, undefined, prev.lastNotifiedAt, prev);
           }
+        } else {
+          // Unknown error — be conservative: keep messageId, do NOT re-seed.
+          // Avoids creating orphans for unclassified failures; we'll retry
+          // next cycle, and if it's actually a "message gone" variant we
+          // haven't matched yet, the error log will surface the pattern.
+          stats.errors.push(`edit ${fixture.id}: ${msg} (unclassified, keeping messageId)`);
+          state.fixtures[fixture.id] = toSnapshot(fixture, prev.seededAt, true, prev.messageId, prev.lastNotifiedAt, prev);
         }
       }
 
