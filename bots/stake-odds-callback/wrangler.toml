@@ -1,0 +1,13 @@
+name = "stake-odds-callback"
+main = "src/index.ts"
+compatibility_date = "2026-06-27"
+
+# Routes:
+#   POST /  — Telegram webhook target (set via setWebhook with secret_token).
+#   GET  /  — trivial liveness probe.
+#
+# Secrets (set via `pnpm secrets:push` after filling .dev.vars):
+#   TELEGRAM_BOT_TOKEN       — same bot token as the Pi stake-odds service.
+#   STAKE_CALLBACK_SECRET    — random string; passed to setWebhook as
+#                              secret_token and echoed back by Telegram in
+#                              the X-Telegram-Bot-Api-Secret-Token header.

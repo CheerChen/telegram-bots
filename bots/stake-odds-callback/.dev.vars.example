@@ -1,0 +1,5 @@
+# Copy to .dev.vars (gitignored) and fill in, then `pnpm secrets:push`.
+TELEGRAM_BOT_TOKEN=
+# Random string, e.g. `openssl rand -hex 32`. Reuse the same value when
+# calling setWebhook (see README.md "Migration").
+STAKE_CALLBACK_SECRET=

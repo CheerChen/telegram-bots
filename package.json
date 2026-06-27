@@ -10,7 +10,11 @@
     "stagewatch:deploy": "pnpm --filter stagewatch-bot deploy",
     "stake-odds:dev": "pnpm --filter stake-odds dev",
     "stake-odds:start": "pnpm --filter stake-odds start",
-    "stake-odds:typecheck": "pnpm --filter stake-odds typecheck"
+    "stake-odds:typecheck": "pnpm --filter stake-odds typecheck",
+    "stake-odds-callback:dev": "pnpm --filter stake-odds-callback dev",
+    "stake-odds-callback:deploy": "pnpm --filter stake-odds-callback deploy",
+    "stake-odds-callback:secrets": "pnpm --filter stake-odds-callback secrets:push",
+    "stake-odds-callback:typecheck": "pnpm --filter stake-odds-callback typecheck"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",

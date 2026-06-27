@@ -3,7 +3,6 @@ import { mkdir } from "node:fs/promises";
 
 import { loadConfig } from "./config.ts";
 import { runCycle } from "./monitor.ts";
-import { CallbackPoller } from "./polling.ts";
 import { StateStore } from "./state.ts";
 
 function log(msg: string): void {
@@ -38,11 +37,11 @@ async function main(): Promise<void> {
       `keywords: ${config.tournamentKeywords.join(", ") || "<none>"}`,
   );
 
-  // Long-poll Telegram for callback_query acks so inline keyboard buttons
-  // (display-only) don't spin/timeout when tapped.
-  const poller = new CallbackPoller(config.telegramBotToken, log);
-  poller.start();
-  log("telegram callback polling started");
+  // Inline keyboard button taps are now handled by the
+  // bots/stake-odds-callback Cloudflare Worker (Telegram webhook). This
+  // service no longer long-polls getUpdates — that loop was the source of
+  // 409 conflicts, long-connection drops, and post-restart click replays.
+  // See bots/stake-odds-callback/README.md for the migration notes.
 
   let running = false;
   const tick = async (): Promise<void> => {
@@ -93,7 +92,6 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     log(`\n${signal} received, shutting down…`);
-    poller.stop();
     server.close(() => process.exit(0));
     // Force-exit after 5s if server.close hangs.
     setTimeout(() => process.exit(0), 5000).unref();
