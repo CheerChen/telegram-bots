@@ -1,5 +1,5 @@
 import { allowChatIdWithCap } from "shared/auth";
-import { lookup } from "shared/jotoba";
+import { lookup } from "shared/dict";
 import {
   getSignatureHeader,
   type LineEvent,

@@ -13,7 +13,7 @@ MAX_CHATS = "50"
 # binding = "CHATS"
 # id = ""
 
-# KV cache for jotoba lookups (shared schema with katakana telegram bot).
+# KV cache for dictionary lookups (shared schema with katakana telegram bot).
 # Create with:
 #   pnpm wrangler kv namespace create katakana-line-cache
 # Or, to share cache with the Telegram bot, paste that bot's id here.

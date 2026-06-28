@@ -7,7 +7,7 @@ import {
   sendMessage,
 } from "shared/telegram";
 import type { TelegramUpdate } from "shared/types";
-import { lookup, type LookupResult, renderHtml, renderPlain } from "shared/jotoba";
+import { lookup, type LookupResult, renderHtml, renderPlain } from "shared/dict";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;

@@ -1,4 +1,4 @@
-import type { Entry } from "shared/jotoba";
+import type { Entry } from "shared/dict";
 import type { LineMessageOut } from "shared/line";
 
 const HEADER_COLOR = "#1f2937";

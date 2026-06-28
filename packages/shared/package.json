@@ -10,7 +10,7 @@
     "./types": "./src/types.ts",
     "./llm": "./src/llm.ts",
     "./session": "./src/session.ts",
-    "./jotoba": "./src/jotoba.ts",
+    "./dict": "./src/dict.ts",
     "./fxtwitter": "./src/fxtwitter.ts"
   },
   "devDependencies": {
