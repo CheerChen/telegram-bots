@@ -3,6 +3,7 @@ set -eu
 
 STATE_DIR="${STATE_DIR:-/app/state}"
 LAST_RUN_FILE="${STATE_DIR}/last_run_date"
+TZ="${TZ:-Asia/Tokyo}"
 SCHEDULE_HOUR="${SCHEDULE_HOUR:-10}"
 SCHEDULE_MINUTE="${SCHEDULE_MINUTE:-0}"
 # Window (seconds) after scheduled time during which a missed run is still
@@ -10,6 +11,7 @@ SCHEDULE_MINUTE="${SCHEDULE_MINUTE:-0}"
 SCHEDULE_WINDOW_SEC="${SCHEDULE_WINDOW_SEC:-600}"
 
 mkdir -p "${STATE_DIR}"
+export TZ
 
 run_if_due() {
     today="$(date +%F)"
@@ -50,7 +52,7 @@ run_if_due() {
     fi
 }
 
-echo "[scheduler] started (TZ=${TZ:-unset}, SCHEDULE_HOUR=${SCHEDULE_HOUR}, SCHEDULE_MINUTE=${SCHEDULE_MINUTE}, WINDOW_SEC=${SCHEDULE_WINDOW_SEC})"
+echo "[scheduler] started (TZ=${TZ}, now=$(date '+%F %T %Z'), SCHEDULE_HOUR=${SCHEDULE_HOUR}, SCHEDULE_MINUTE=${SCHEDULE_MINUTE}, WINDOW_SEC=${SCHEDULE_WINDOW_SEC})"
 
 while true; do
     run_if_due || true

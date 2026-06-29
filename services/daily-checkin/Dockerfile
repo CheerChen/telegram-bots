@@ -11,6 +11,8 @@ RUN npm install --omit=dev
 
 # --- runtime stage ---
 FROM base AS runtime
+RUN apk add --no-cache tzdata
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json tsconfig.json ./
 COPY src ./src
@@ -19,6 +21,7 @@ COPY scripts ./scripts
 RUN chmod +x scripts/run-checkin.sh scripts/start-scheduler.sh
 
 ENV NODE_ENV=production
+ENV TZ=Asia/Tokyo
 
 WORKDIR /app
 
