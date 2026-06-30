@@ -206,18 +206,21 @@ async function parseJvc(source: JvcSource): Promise<Item[]> {
 async function parseRythem(source: UrlSource<"rythem">): Promise<Item[]> {
   const $ = load(await fetchText(source.url));
   const items: Item[] = [];
-  $("section.Oqnisf").each((_, el) => {
+  $("section.wixui-section, section[data-block-level-container='ClassicSection']").each((_, el) => {
+    const id = ($(el).attr("id") ?? "").trim();
     const classes = ($(el).attr("class") ?? "").split(/\s+/);
-    const compId = classes.find((c) => c.startsWith("comp-"));
+    const compId = id || classes.find((c) => c.startsWith("comp-"));
     if (!compId) return;
 
     let title = "";
+    const heading = $(el).find(".wixui-rich-text h6, .wixui-rich-text h5, .wixui-rich-text h4").first();
+    if (heading.length) title = normalizeTitle(heading.text());
     $(el)
       .find(".wixui-rich-text")
       .each((__, rt) => {
         if (title) return;
-        const heading = $(rt).find("h1,h2,h3,h4,h5,h6").first();
-        if (heading.length) title = normalizeTitle(heading.text());
+        const fallbackHeading = $(rt).find("h1,h2,h3,h4,h5,h6").first();
+        if (fallbackHeading.length) title = normalizeTitle(fallbackHeading.text());
       });
     if (!title) title = normalizeTitle($(el).find(".wixui-rich-text").first().text());
     if (!title || title === "INFORMATION" || title === "More") return;
