@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { mkdir } from "node:fs/promises";
 
 import { loadConfig } from "./config.ts";
-import { runCycle } from "./monitor.ts";
+import { notifyStartup, runCycle } from "./monitor.ts";
 import { StateStore } from "./state.ts";
 
 function log(msg: string): void {
@@ -61,6 +61,13 @@ async function main(): Promise<void> {
       void tick().finally(scheduleNext);
     }, config.pollIntervalMs);
   };
+
+  // Send startup confirmation so you know the bot is wired up.
+  try {
+    await notifyStartup(config);
+  } catch (err) {
+    log(`startup notification failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // Kick off immediately on boot, then settle into the interval.
   void tick().finally(scheduleNext);

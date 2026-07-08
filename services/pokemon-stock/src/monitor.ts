@@ -174,6 +174,15 @@ async function notify(config: PokemonStockConfig, text: string): Promise<void> {
   });
 }
 
+/** Send a startup confirmation so you know the bot is wired up. */
+export async function notifyStartup(config: PokemonStockConfig): Promise<void> {
+  const msg =
+    `pokemon-stock 已启动\n` +
+    `监控 ${config.targets.length} 个目标，轮询间隔 ${Math.round(config.pollIntervalMs / 1000)}s` +
+    (config.cookie ? "" : "\n⚠️ 未配置 POKEMON_COOKIE，使用匿名访问");
+  await notify(config, msg);
+}
+
 function withinCooldown(lastAlertAt: string | undefined, cooldownMs: number): boolean {
   if (!lastAlertAt) return false;
   const elapsed = Date.now() - new Date(lastAlertAt).getTime();
@@ -248,6 +257,13 @@ export async function runCycle(
       log("first run, already available (no notification)");
     } else if (!state.available && prevAvailable === true) {
       log("went unavailable");
+      const msg = `卖完了…${state.title}\n${url}`;
+      try {
+        await notify(config, msg);
+        stats.notified++;
+      } catch (err) {
+        log(`notify failed: ${err}`);
+      }
     }
 
     newTargets[url] = state;
