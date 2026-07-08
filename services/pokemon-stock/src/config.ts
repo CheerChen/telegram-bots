@@ -8,9 +8,16 @@ export interface PokemonStockConfig {
   statePath: string;
 
   // Telegram
+  telegramEnabled: boolean;
   telegramBotToken: string;
   telegramChatId: string;
   telegramMessageThreadId: number | undefined;
+
+  // Bark push (optional, iOS-only). When configured, alerts are also sent
+  // via Bark for time-sensitive lock-screen delivery.
+  barkServerUrl: string | undefined;
+  barkDeviceKey: string | undefined;
+  barkIcon: string | undefined;
 
   // Pokémon Center auth — optional. Anonymous access can still read
   // product page stock signals; login cookie only matters for purchasing.
@@ -52,12 +59,17 @@ export function loadConfig(): PokemonStockConfig {
     dataDir,
     statePath: resolve(dataDir, "state.json"),
 
-    telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
-    telegramChatId: required("TELEGRAM_CHAT_ID"),
+    telegramEnabled: optional("TELEGRAM_ENABLED", "true") !== "false",
+    telegramBotToken: process.env.TELEGRAM_BOT_TOKEN?.trim() || "",
+    telegramChatId: process.env.TELEGRAM_CHAT_ID?.trim() || "",
     telegramMessageThreadId: (() => {
       const v = process.env.TELEGRAM_MESSAGE_THREAD_ID?.trim();
       return v ? parseInt(v, 10) : undefined;
     })(),
+
+    barkServerUrl: process.env.BARK_SERVER_URL?.trim() || undefined,
+    barkDeviceKey: process.env.BARK_DEVICE_KEY?.trim() || undefined,
+    barkIcon: process.env.BARK_ICON?.trim() || undefined,
 
     cookie: process.env.POKEMON_COOKIE?.trim() || undefined,
     userAgent: optional(

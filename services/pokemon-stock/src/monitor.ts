@@ -181,6 +181,7 @@ async function checkOne(
 // ---------------------------------------------------------------------------
 
 async function notify(config: PokemonStockConfig, text: string): Promise<void> {
+  if (!config.telegramEnabled) return;
   console.log(`[notify] ${text.replace(/\n/g, " | ")}`);
   await sendMessage(config.telegramBotToken, {
     chatId: config.telegramChatId,
@@ -190,6 +191,42 @@ async function notify(config: PokemonStockConfig, text: string): Promise<void> {
   });
 }
 
+/**
+ * Send a Bark push notification (iOS, time-sensitive lock-screen delivery).
+ * Best-effort: errors are logged but do not fail the cycle.
+ */
+async function notifyBark(
+  config: PokemonStockConfig,
+  title: string,
+  body: string,
+  opts?: { url?: string; call?: boolean },
+): Promise<void> {
+  if (!config.barkServerUrl || !config.barkDeviceKey) return;
+  try {
+    const payload: Record<string, string> = {
+      device_key: config.barkDeviceKey,
+      title,
+      body,
+      group: "pokemon-stock",
+      level: "timeSensitive",
+    };
+    if (config.barkIcon) payload.icon = config.barkIcon;
+    if (opts?.url) payload.url = opts.url;
+    if (opts?.call) payload.call = "1";
+
+    const res = await fetch(`${config.barkServerUrl}/push`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      console.log(`[bark] HTTP ${res.status}: ${await res.text()}`);
+    }
+  } catch (err) {
+    console.log(`[bark] send failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** Send a startup confirmation so you know the bot is wired up. */
 export async function notifyStartup(config: PokemonStockConfig): Promise<void> {
   const msg =
@@ -197,6 +234,7 @@ export async function notifyStartup(config: PokemonStockConfig): Promise<void> {
     `监控 ${config.targets.length} 个目标，轮询间隔 ${Math.round(config.pollIntervalMs / 1000)}s` +
     (config.cookie ? "" : "\n⚠️ 未配置 POKEMON_COOKIE，使用匿名访问");
   await notify(config, msg);
+  await notifyBark(config, "pokemon-stock 已启动", `${config.targets.length} 个目标 · ${Math.round(config.pollIntervalMs / 1000)}s 轮询`);
 }
 
 function withinCooldown(lastAlertAt: string | undefined, cooldownMs: number): boolean {
@@ -280,6 +318,7 @@ export async function runCycle(
       } catch (err) {
         log(`notify failed: ${err}`);
       }
+      await notifyBark(config, "开卖了！", state.title, { url, call: true });
     } else if (prevAvailable === undefined && state.available) {
       log("first run, already available (no notification)");
     } else if (!state.available && prevAvailable === true) {
@@ -291,6 +330,7 @@ export async function runCycle(
       } catch (err) {
         log(`notify failed: ${err}`);
       }
+      await notifyBark(config, "卖完了…", state.title, { url });
     }
 
     newTargets[url] = state;
@@ -315,6 +355,7 @@ export async function runCycle(
       } catch (err) {
         stats.logs.push(`waiting room alert send failed: ${err}`);
       }
+      await notifyBark(config, "虚拟等候室已开启", "即将开卖，请准备！", { url: "https://www.pokemoncenter-online.com/" });
       prev.lastMonitorAlertAt = new Date().toISOString();
     }
   }
@@ -333,6 +374,7 @@ export async function runCycle(
       } catch (err) {
         stats.logs.push(`monitor alert send failed: ${err}`);
       }
+      await notifyBark(config, "监控可能失效", `所有 ${config.targets.length} 个目标无法解析`);
       prev.lastMonitorAlertAt = new Date().toISOString();
       stats.monitorAlert = true;
     }

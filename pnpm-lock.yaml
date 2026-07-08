@@ -192,22 +192,6 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  services/pc-stock:
-    dependencies:
-      shared:
-        specifier: workspace:*
-        version: link:../../packages/shared
-    devDependencies:
-      '@types/node':
-        specifier: ^25.7.0
-        version: 25.7.0
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.6.0
-        version: 5.9.3
-
   services/pokemon-stock:
     dependencies:
       shared:
