@@ -1,0 +1,32 @@
+# Deployment compose — pasted into Dockge's Stack editor on the Pi.
+# No `build:` block: the Pi pulls the image from the private registry.
+# For local Docker iteration, use compose.dev.yaml instead.
+
+services:
+  pokemon-stock:
+    image: ${REGISTRY_URL:-192.168.0.110:5000}/pokemon-stock:${TAG:-latest}
+    container_name: pokemon-stock
+    restart: unless-stopped
+    environment:
+      POKEMON_STOCK_PORT: "8080"
+      POKEMON_STOCK_HOST: "0.0.0.0"
+      POKEMON_STOCK_DATA_DIR: /app/services/pokemon-stock/data
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      TELEGRAM_MESSAGE_THREAD_ID: "${TELEGRAM_MESSAGE_THREAD_ID:-}"
+      POKEMON_COOKIE: "${POKEMON_COOKIE:-}"
+      POKEMON_USER_AGENT: "${POKEMON_USER_AGENT:-}"
+      POKEMON_TARGETS: "${POKEMON_TARGETS:-}"
+      POKEMON_POLL_INTERVAL_MS: "${POKEMON_POLL_INTERVAL_MS:-300000}"
+      POKEMON_INTER_PRODUCT_DELAY_MS: "${POKEMON_INTER_PRODUCT_DELAY_MS:-2000}"
+      POKEMON_MONITOR_ALERT_COOLDOWN_MS: "${POKEMON_MONITOR_ALERT_COOLDOWN_MS:-3600000}"
+    ports:
+      - "${POKEMON_STOCK_HOST_PORT:-8767}:8080"
+    volumes:
+      # Pi 上请改成绝对路径，例如 /opt/pokemon-stock/data
+      - /opt/pokemon-stock/data:/app/services/pokemon-stock/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

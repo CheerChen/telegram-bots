@@ -1,4 +1,4 @@
-# Makefile for clawbot — iLink dispatcher running on Pi via Dockge
+# Makefile for pokemon-stock — Pokémon Center stock monitor running on Pi via Dockge
 #
 # Build on Mac (Apple Silicon → linux/arm64), push to Pi's private registry,
 # Dockge on Pi pulls and (re)deploys.
@@ -8,7 +8,7 @@
 
 # --- Variables ---
 REGISTRY_URL ?= 192.168.0.110:5000
-IMAGE        := clawbot
+IMAGE        := pokemon-stock
 TAG          ?= latest
 FULL_IMAGE   := $(REGISTRY_URL)/$(IMAGE):$(TAG)
 
@@ -51,7 +51,7 @@ ps:
 	$(DEV) ps
 
 shell:
-	$(DEV) exec clawbot sh
+	$(DEV) exec pokemon-stock sh
 
 # Convenience for running the *production* compose locally (still pulls registry image)
 prod-up:
@@ -88,7 +88,6 @@ release-sha: build
 	@$(MAKE) image-sha --no-print-directory
 
 # Print the local image identifiers — both image-ID (config blob) and repo digest (manifest).
-# Repo digest is what `docker inspect` on the Pi will report; it's the comparable one.
 image-sha:
 	@ID=$$(docker inspect $(FULL_IMAGE) --format '{{.Id}}' 2>/dev/null); \
 	DIGEST=$$(docker inspect $(FULL_IMAGE) --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null \
@@ -124,7 +123,7 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Local development:"
-	@echo "  dev            Run clawbot via tsx (host pnpm, not Docker)"
+	@echo "  dev            Run pokemon-stock via tsx (host pnpm, not Docker)"
 	@echo "  typecheck      tsc --noEmit"
 	@echo ""
 	@echo "Docker (local — compose.dev.yaml, builds locally):"

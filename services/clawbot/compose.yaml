@@ -1,5 +1,5 @@
-# Deployment compose — pasted into Portainer's Stack editor on the Pi.
-# No `build:` block: Portainer pulls the image from the private registry.
+# Deployment compose — pasted into Dockge's Stack editor on the Pi.
+# No `build:` block: the Pi pulls the image from the private registry.
 # For local Docker iteration, use compose.dev.yaml instead.
 
 services:

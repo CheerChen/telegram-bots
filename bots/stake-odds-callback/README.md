@@ -78,7 +78,7 @@ do this exact sequence:
    them either; it never used them).
 
 2. **Then**, rebuild + redeploy the Pi service with the poller removed
-   (`make release-sha && make portainer-redeploy`). Until step 1 is done,
+   (`make release-sha`). Until step 1 is done,
    do NOT redeploy the Pi alone — that would create a window where
    neither the old poller nor the webhook is active.
 

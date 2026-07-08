@@ -33,3 +33,6 @@ Long-running WeChat bridge service that connects ilink with the ctxd worker.
 
 `services/stake-odds/`
 Long-running Stake soccer odds watcher. Polls the popular tournament's fixture list every 10 minutes, watches the day's World Cup matches, and pushes a Telegram alert when any threeway odds line moves more than the configured threshold. Live matches are skipped; finished matches drop off the watchlist. Runs on the home Pi (same exit IP as the `cf_clearance` credential).
+
+`services/pokemon-stock/`
+Long-running Pokémon Center Online stock monitor. Polls product pages for purchasability (quantity select enabled + cart button not greyed) and pushes a Telegram alert when a target transitions from unavailable to available. Alerts if all targets fail to parse (cookie/session break, QueueIT block). Runs on the home Pi (same exit IP as the login cookie).

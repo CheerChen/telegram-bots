@@ -1,7 +1,7 @@
 # Makefile for stake-odds — Stake soccer odds watcher running on Pi via Dockge
 #
 # Build on Mac (Apple Silicon → linux/arm64), push to Pi's private registry,
-# Dockge/Portainer on Pi pulls and (re)deploys.
+# Dockge on Pi pulls and (re)deploys.
 
 # Local overrides (not tracked)
 -include Makefile.local
@@ -15,12 +15,6 @@ FULL_IMAGE   := $(REGISTRY_URL)/$(IMAGE):$(TAG)
 # Immutable tag derived from git HEAD (use via `make release-sha`)
 GIT_SHA      := $(shell git rev-parse --short=12 HEAD 2>/dev/null)
 SHA_IMAGE    := $(REGISTRY_URL)/$(IMAGE):$(GIT_SHA)
-
-# Dockge/Portainer (filled in once stack exists; left blank for now)
-PORTAINER_URL         ?= http://192.168.0.110:9000
-PORTAINER_API_KEY     ?=
-PORTAINER_STACK_NAME  ?= stake-odds
-PORTAINER_ENDPOINT_ID ?=
 
 export REGISTRY_URL TAG
 
@@ -123,33 +117,6 @@ diagnose:
 	@$(MAKE) image-sha --no-print-directory
 	@$(MAKE) verify-remote --no-print-directory
 
-# --- Portainer Remote Deployment (enable once stack exists) ---
-.PHONY: portainer-redeploy
-
-portainer-redeploy:
-	@echo "--> Redeploying stack '$(PORTAINER_STACK_NAME)' in Portainer..."
-	@if [ -z "$(PORTAINER_API_KEY)" ]; then echo "Error: PORTAINER_API_KEY required (set in Makefile.local)."; exit 1; fi
-	@if [ -z "$(PORTAINER_ENDPOINT_ID)" ]; then echo "Error: PORTAINER_ENDPOINT_ID required (set in Makefile.local once stack is created)."; exit 1; fi
-	@STACK_ID=$$(curl -s -X GET \
-		"$(PORTAINER_URL)/api/stacks" \
-		-H "X-API-Key: $(PORTAINER_API_KEY)" \
-		| jq -r '.[] | select(.Name=="$(PORTAINER_STACK_NAME)") | .Id'); \
-	if [ -z "$$STACK_ID" ] || [ "$$STACK_ID" = "null" ]; then \
-		echo "Error: Stack '$(PORTAINER_STACK_NAME)' not found."; exit 1; \
-	fi; \
-	echo "Found stack ID: $$STACK_ID"; \
-	STACK_FILE=$$(curl -s -X GET \
-		"$(PORTAINER_URL)/api/stacks/$$STACK_ID/file" \
-		-H "X-API-Key: $(PORTAINER_API_KEY)" \
-		| jq -r '.StackFileContent'); \
-	curl -s -X PUT \
-		"$(PORTAINER_URL)/api/stacks/$$STACK_ID?endpointId=$(PORTAINER_ENDPOINT_ID)" \
-		-H "X-API-Key: $(PORTAINER_API_KEY)" \
-		-H "Content-Type: application/json" \
-		-d "$$(jq -n --arg content "$$STACK_FILE" '{stackFileContent: $$content, prune: true, pullImage: true}')" \
-		| jq .; \
-	echo "--> Stack redeployed."
-
 # --- Help ---
 .PHONY: help
 
@@ -178,12 +145,6 @@ help:
 	@echo "  image-sha      print local image digest"
 	@echo "  verify-remote  query registry for the current :$(TAG) digest"
 	@echo ""
-	@echo "Portainer (once stack exists):"
-	@echo "  portainer-redeploy"
-	@echo "    requires PORTAINER_API_KEY and PORTAINER_ENDPOINT_ID (Makefile.local)"
-	@echo ""
 	@echo "Overrides:"
 	@echo "  REGISTRY_URL=$(REGISTRY_URL)"
 	@echo "  TAG=$(TAG)"
-	@echo "  PORTAINER_URL=$(PORTAINER_URL)"
-	@echo "  PORTAINER_STACK_NAME=$(PORTAINER_STACK_NAME)"
