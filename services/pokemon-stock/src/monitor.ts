@@ -52,7 +52,7 @@ async function fetchWithCookies(
   url: string,
   jar: CookieJar,
   userAgent: string,
-): Promise<string> {
+): Promise<{ html: string; finalUrl: string }> {
   let current = url;
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     const cookieHeader = jar.toHeader();
@@ -75,7 +75,8 @@ async function fetchWithCookies(
       }
     }
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${current}`);
-    return await res.text();
+    const html = await res.text();
+    return { html, finalUrl: current };
   }
   throw new Error(`too many redirects for ${url}`);
 }
@@ -95,6 +96,9 @@ const RE_TITLE = /<h1\s+class="lead">(.*?)<span/s;
 // Product page structure markers (used to detect queue/login/error pages)
 const RE_HAS_TITLE = /<h1\s+class="lead"/i;
 const RE_HAS_QUANTITY = /<select\s+id="quantity"/i;
+// QueueIT waiting room detection — final URL domain or HTML content markers
+const RE_QUEUEIT_URL = /queue-it\.net/i;
+const RE_QUEUEIT_HTML = /queue-it\.net|QueueIT|virtual.*queue|waiting.*room|待機室|仮想待合室/i;
 
 interface ParseResult {
   state: ProductState;
@@ -128,6 +132,7 @@ function parseProductPage(html: string): ParseResult {
 interface CheckResult {
   state: ProductState | null;
   isProductPage: boolean;
+  waitingRoom: boolean;
   error: string | null;
 }
 
@@ -148,13 +153,24 @@ async function checkOne(
 
   if (loginCookie) jar.mergeHeader(loginCookie);
   try {
-    const html = await fetchWithCookies(url, jar, userAgent);
+    const { html, finalUrl } = await fetchWithCookies(url, jar, userAgent);
+
+    // Detect QueueIT waiting room: redirect to queue-it.net domain or
+    // HTML contains QueueIT markers. This is a normal pre-sale state, not
+    // a monitor failure.
+    const isQueueItUrl = RE_QUEUEIT_URL.test(finalUrl);
+    const isQueueItHtml = RE_QUEUEIT_HTML.test(html);
+    if (isQueueItUrl || isQueueItHtml) {
+      return { state: null, isProductPage: false, waitingRoom: true, error: null };
+    }
+
     const { state, isProductPage } = parseProductPage(html);
-    return { state, isProductPage, error: null };
+    return { state, isProductPage, waitingRoom: false, error: null };
   } catch (err) {
     return {
       state: null,
       isProductPage: false,
+      waitingRoom: false,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -211,6 +227,7 @@ export async function runCycle(
 
   // --- Check each target ---
   let allFailed = true;
+  let anyWaitingRoom = false;
 
   for (let i = 0; i < config.targets.length; i++) {
     const url = config.targets[i]!;
@@ -221,6 +238,16 @@ export async function runCycle(
     };
 
     const result = await checkOne(url, config.cookie, config.userAgent);
+
+    // QueueIT waiting room — normal pre-sale state, not a failure.
+    if (result.waitingRoom) {
+      anyWaitingRoom = true;
+      allFailed = false;
+      log("waiting room active (QueueIT)");
+      // Preserve previous state so we don't lose transition tracking.
+      if (prev.targets[url]) newTargets[url] = prev.targets[url];
+      continue;
+    }
 
     if (result.error || !result.state || !result.isProductPage) {
       stats.failures++;
@@ -274,7 +301,25 @@ export async function runCycle(
     }
   }
 
-  // --- Monitor health alert: all targets failed ---
+  // --- Waiting room notification ---
+  if (anyWaitingRoom) {
+    stats.logs.push("waiting room detected for one or more targets");
+    if (!withinCooldown(prev.lastMonitorAlertAt, config.monitorAlertCooldownMs)) {
+      const msg =
+        "🚪 虚拟等候室已开启\n" +
+        "即将开卖，请准备！\n" +
+        "https://www.pokemoncenter-online.com/";
+      try {
+        await notify(config, msg);
+        stats.notified++;
+      } catch (err) {
+        stats.logs.push(`waiting room alert send failed: ${err}`);
+      }
+      prev.lastMonitorAlertAt = new Date().toISOString();
+    }
+  }
+
+  // --- Monitor health alert: all targets failed (not waiting room) ---
   if (allFailed && config.targets.length > 0) {
     stats.logs.push("all targets failed — monitor may be broken");
     if (!withinCooldown(prev.lastMonitorAlertAt, config.monitorAlertCooldownMs)) {
