@@ -7,17 +7,7 @@
     "katakana:dev": "pnpm --filter katakana-bot dev",
     "katakana:deploy": "pnpm --filter katakana-bot deploy",
     "stagewatch:dev": "pnpm --filter stagewatch-bot dev",
-    "stagewatch:deploy": "pnpm --filter stagewatch-bot deploy",
-    "stake-odds:dev": "pnpm --filter stake-odds dev",
-    "stake-odds:start": "pnpm --filter stake-odds start",
-    "stake-odds:typecheck": "pnpm --filter stake-odds typecheck",
-    "stake-odds-callback:dev": "pnpm --filter stake-odds-callback dev",
-    "stake-odds-callback:deploy": "pnpm --filter stake-odds-callback deploy",
-    "stake-odds-callback:secrets": "pnpm --filter stake-odds-callback secrets:push",
-    "stake-odds-callback:typecheck": "pnpm --filter stake-odds-callback typecheck",
-    "pokemon-stock:dev": "pnpm --filter pokemon-stock dev",
-    "pokemon-stock:start": "pnpm --filter pokemon-stock start",
-    "pokemon-stock:typecheck": "pnpm --filter pokemon-stock typecheck"
+    "stagewatch:deploy": "pnpm --filter stagewatch-bot deploy"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",
