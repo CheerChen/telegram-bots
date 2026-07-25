@@ -1,0 +1,59 @@
+# Builds clawbot natively on the Pi (arm64) and deploys the Dockge stack.
+# Runs on the self-hosted runner — the only jobs that need LAN access
+# (private registry + /opt/stacks).
+#
+# SECURITY NOTE (public repo): this workflow must never gain a pull_request
+# trigger — it executes on the Pi and only the repo owner can push master.
+name: Deploy clawbot
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "services/clawbot/**"
+      - "packages/ilink/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-clawbot.yml"
+
+concurrency:
+  group: deploy-clawbot
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: [self-hosted, pi]
+    env:
+      REGISTRY: 192.168.0.110:5000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # pnpm's local store persists on the runner, so repeat installs are fast.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter clawbot typecheck
+      - name: Build image (native arm64)
+        run: |
+          SHA=${GITHUB_SHA::12}
+          docker build -f services/clawbot/Dockerfile \
+            -t "$REGISTRY/clawbot:$SHA" -t "$REGISTRY/clawbot:latest" .
+      - name: Push (immutable SHA tag + latest alias)
+        run: |
+          SHA=${GITHUB_SHA::12}
+          docker push "$REGISTRY/clawbot:$SHA"
+          docker push "$REGISTRY/clawbot:latest"
+      - name: Deploy stack
+        run: |
+          cd /opt/stacks/clawbot
+          sudo docker compose pull
+          sudo docker compose up -d
+      - name: Verify healthz
+        run: |
+          for i in $(seq 1 18); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/healthz || true)
+            if [ "$code" = "200" ]; then echo "healthy after $((i*5))s"; exit 0; fi
+            sleep 5
+          done
+          echo "healthz never returned 200"
+          exit 1
