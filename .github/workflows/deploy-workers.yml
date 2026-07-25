@@ -35,6 +35,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
+      - run: pnpm -r test
       - name: Deploy all workers
         run: |
           failed=""
