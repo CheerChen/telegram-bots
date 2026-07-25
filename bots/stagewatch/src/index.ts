@@ -164,7 +164,14 @@ function trimSeenIds(ids: string[]): string[] {
 async function loadState(kv: KVNamespace, sourceName: string): Promise<SourceState> {
   const raw = await kv.get(stateKey(sourceName));
   if (!raw) return { initialized: false, seenIds: [] };
-  const parsed = JSON.parse(raw) as Partial<SourceState>;
+  let parsed: Partial<SourceState>;
+  try {
+    parsed = JSON.parse(raw) as Partial<SourceState>;
+  } catch {
+    // Corrupted state must not kill the whole run; re-seed silently next pass.
+    console.error(`[${sourceName}] corrupted KV state, resetting`);
+    return { initialized: false, seenIds: [] };
+  }
   return {
     initialized: parsed.initialized === true,
     seenIds: Array.isArray(parsed.seenIds) ? parsed.seenIds.filter((v): v is string => typeof v === "string") : [],
@@ -386,16 +393,27 @@ async function processSource(env: Env, source: Source, options: RunOptions, stat
 
   let items: Item[];
   try {
-    items = applyTitleFilter(source, await parseSource(source));
+    items = await parseSource(source);
   } catch (error) {
     stats.failures += 1;
     stats.logs.push(`[${source.name}] fetch/parse error: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
 
+  // Zero raw items means the selector no longer matches the page — alertable.
+  // Zero items *after* the title filter is a normal quiet day — not alertable.
   if (!items.length) {
     stats.skipped += 1;
     stats.logs.push(`[${source.name}] no items returned`);
+    return;
+  }
+
+  items = applyTitleFilter(source, items);
+  if (!items.length) {
+    state.lastRun = nowIso();
+    await saveState(env.STAGEWATCH_STATE, source.name, state);
+    stats.processed += 1;
+    stats.logs.push(`[${source.name}] no items after title filter`);
     return;
   }
 
@@ -452,7 +470,13 @@ async function runMonitor(env: Env, options: RunOptions = {}): Promise<RunStats>
   const stats: RunStats = { processed: 0, notified: 0, failures: 0, skipped: 0, logs: [] };
   const sources = selectSources(options.sourceNames);
   for (const source of sources) {
-    await processSource(env, source, options, stats);
+    try {
+      await processSource(env, source, options, stats);
+    } catch (error) {
+      // A single source (bad KV read/write etc.) must not abort the others.
+      stats.failures += 1;
+      stats.logs.push(`[${source.name}] unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   const missing = (options.sourceNames ?? []).filter((name) => !sources.some((source) => source.name === name));
   if (missing.length) stats.logs.push(`unknown sources: ${missing.join(", ")}`);
@@ -493,6 +517,22 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runMonitor(env));
+    ctx.waitUntil(
+      runMonitor(env)
+        .then(async (stats) => {
+          // Surface broken sources: fetch/parse errors, notify failures, and
+          // selectors that matched nothing. Quiet days don't alert.
+          if (stats.failures === 0 && stats.skipped === 0) return;
+          const problems = stats.logs.filter((line) =>
+            /error|failed|no items returned/.test(line),
+          );
+          await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+            chatId: env.TELEGRAM_CHAT_ID,
+            text: `⚠️ stagewatch: ${stats.failures} failure(s), ${stats.skipped} empty source(s)\n${problems.join("\n")}`,
+            disableWebPagePreview: true,
+          });
+        })
+        .catch((error) => console.error(`[cron] run/alert failed: ${error}`)),
+    );
   },
 };
