@@ -20,6 +20,8 @@ export interface PollLoopOptions {
   onMessage(msg: WeixinMessage, ctx: { baseUrl: string; token: string }): void | Promise<void>;
   onBufUpdate(buf: string): void | Promise<void>;
   onError?(err: unknown, consecutiveFailures: number): void;
+  /** Called after every successful getupdates round-trip, including empty ones. */
+  onCycle?(): void;
 }
 
 export async function runPollLoop(opts: PollLoopOptions): Promise<PollExit> {
@@ -60,6 +62,7 @@ export async function runPollLoop(opts: PollLoopOptions): Promise<PollExit> {
       }
 
       consecutiveFailures = 0;
+      opts.onCycle?.();
       if (resp.get_updates_buf) {
         getUpdatesBuf = resp.get_updates_buf;
         await opts.onBufUpdate(getUpdatesBuf);

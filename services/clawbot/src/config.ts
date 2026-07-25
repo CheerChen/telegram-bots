@@ -18,6 +18,9 @@ export interface ClawConfig {
   workers: {
     ctxd: string | undefined;
   };
+  alertTelegramBotToken: string | undefined;
+  alertTelegramChatId: string | undefined;
+  uiUrl: string;
 }
 
 export function loadConfig(): ClawConfig {
@@ -40,5 +43,8 @@ export function loadConfig(): ClawConfig {
     workers: {
       ctxd: process.env.WORKER_URL_CTXD?.trim() || undefined,
     },
+    alertTelegramBotToken: process.env.ALERT_TELEGRAM_BOT_TOKEN?.trim() || undefined,
+    alertTelegramChatId: process.env.ALERT_TELEGRAM_CHAT_ID?.trim() || undefined,
+    uiUrl: process.env.CLAW_UI_URL?.trim() || "http://pi:8765",
   };
 }

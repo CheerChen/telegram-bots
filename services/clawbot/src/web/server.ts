@@ -9,6 +9,8 @@ import type { ClawState } from "../state.ts";
 
 const UI_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "ui.html");
 const MAX_JSON_BODY = 4096;
+// Long-poll cycles are ~40s; 5 min without a successful round-trip means stuck.
+const HEALTHZ_STALE_MS = 5 * 60_000;
 
 export interface WebServer {
   close(): Promise<void>;
@@ -66,8 +68,19 @@ async function dispatch(
   }
 
   if (method === "GET" && path === "/healthz") {
-    res.writeHead(200, { "content-type": "text/plain" });
-    res.end("ok");
+    // Healthy = actively polling with a recent successful round-trip.
+    // auth-required / authing / stalled poll all report 503 so the Docker
+    // HEALTHCHECK and any external pinger see the real state.
+    const snap = state.getSnapshot();
+    const stalePoll =
+      !snap.lastPollAt || Date.now() - Date.parse(snap.lastPollAt) > HEALTHZ_STALE_MS;
+    const healthy = snap.status === "running" && !stalePoll;
+    res.writeHead(healthy ? 200 : 503, { "content-type": "text/plain" });
+    res.end(
+      healthy
+        ? "ok"
+        : `unhealthy: status=${snap.status}${snap.status === "running" && stalePoll ? " (stale poll)" : ""}`,
+    );
     return;
   }
 

@@ -18,6 +18,9 @@ services:
       LLM_MODEL: "${LLM_MODEL:-qwen3.5-omni-plus}"
       WORKER_URL_CTXD: "${WORKER_URL_CTXD:-}"
       CLAW_WORKER_SECRET: "${CLAW_WORKER_SECRET:-}"
+      ALERT_TELEGRAM_BOT_TOKEN: "${ALERT_TELEGRAM_BOT_TOKEN:-}"
+      ALERT_TELEGRAM_CHAT_ID: "${ALERT_TELEGRAM_CHAT_ID:-}"
+      CLAW_UI_URL: "${CLAW_UI_URL:-}"
     ports:
       - "${CLAW_HOST_PORT:-8765}:8080"
     volumes:

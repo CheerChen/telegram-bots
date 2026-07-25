@@ -34,7 +34,15 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
+// Backstop: a rejection escaping a fire-and-forget path (e.g. batched replies)
+// must not take down the whole bridge with Node's default crash behavior.
+process.on("unhandledRejection", (reason) => {
+  console.error("unhandled rejection", reason);
+});
+
 main().catch((err) => {
   console.error(err);
-  process.exitCode = 1;
+  // Hard-exit: the web server would otherwise keep a half-booted process
+  // alive forever; exiting lets `restart: unless-stopped` retry properly.
+  process.exit(1);
 });

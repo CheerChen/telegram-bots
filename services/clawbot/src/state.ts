@@ -6,6 +6,7 @@ import { normalizeBaseUrl } from "ilink/protocol";
 import { readTokenFileIfExists, writeTokenFile } from "ilink/token-store";
 import type { LoginStatus, QRCodeResponse, TokenFile } from "ilink/types";
 
+import { notifyOwner } from "./alert.ts";
 import type { ClawConfig } from "./config.ts";
 import { routeMessage, type RouterContext } from "./router.ts";
 
@@ -240,6 +241,11 @@ export class ClawState {
           consecutiveFailures,
         };
       },
+      // Fires on every successful round-trip (incl. empty long-polls), unlike
+      // onBufUpdate — this is what /healthz uses as the liveness signal.
+      onCycle: () => {
+        this.snapshot = { ...this.snapshot, lastPollAt: new Date().toISOString() };
+      },
     });
 
     this.stopHeartbeat();
@@ -250,6 +256,11 @@ export class ClawState {
         authReason: "expired",
         authError: `session expired (errcode=${exit.errcode}${exit.errmsg ? `: ${exit.errmsg}` : ""})`,
       };
+      void notifyOwner(
+        this.config,
+        `⚠️ clawbot: WeChat session expired (errcode=${exit.errcode}). ` +
+          `Re-scan QR: ${this.config.uiUrl}`,
+      );
     }
   }
 
