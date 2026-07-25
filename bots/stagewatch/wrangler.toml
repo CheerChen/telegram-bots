@@ -2,6 +2,9 @@ name = "stagewatch-bot"
 main = "src/index.ts"
 compatibility_date = "2026-06-16"
 
+[observability]
+enabled = true
+
 [triggers]
 crons = ["7 22 * * *"]
 

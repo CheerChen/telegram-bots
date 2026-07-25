@@ -2,6 +2,9 @@ name = "daily-checkin"
 main = "src/index.ts"
 compatibility_date = "2026-06-16"
 
+[observability]
+enabled = true
+
 [triggers]
 # 10:00 JST on weekdays (01:00 UTC; JST date == UTC date at this hour)
 crons = ["0 1 * * 1-5"]

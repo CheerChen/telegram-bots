@@ -2,6 +2,9 @@ name = "cc-katakana-line-bot"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
+[observability]
+enabled = true
+
 [vars]
 # Soft cap on auto-registered private users. First N who DM the bot get in.
 MAX_CHATS = "50"

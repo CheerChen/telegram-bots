@@ -2,6 +2,9 @@ name = "ctxd-bot"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
+[observability]
+enabled = true
+
 [vars]
 ALLOWED_CHAT_ID = "6950532953"
 
