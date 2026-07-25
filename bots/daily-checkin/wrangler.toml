@@ -1,0 +1,31 @@
+name = "daily-checkin"
+main = "src/index.ts"
+compatibility_date = "2026-06-16"
+
+[triggers]
+# 10:00 JST on weekdays (01:00 UTC; JST date == UTC date at this hour)
+crons = ["0 1 * * 1-5"]
+
+[[kv_namespaces]]
+binding = "CHECKIN_STATE"
+id = "ba110c019ed7448389ecee7adbf427b2"
+
+[vars]
+PUBLIC_URL = "https://daily-checkin.cheerchen37.workers.dev"
+MEETING_TITLE_BLACKLIST = "キャンセル済み,【#DBRE】DS"
+MIN_MEETING_TITLE_LENGTH = "5"
+
+# Secrets (set via `pnpm secrets:push` after filling .dev.vars):
+#   OUTLOOK_ICS_URL       Outlook published calendar ICS URL (fallback path)
+#   AZURE_CLIENT_ID       Entra app registration (public client + PKCE)
+#   AZURE_TENANT_ID
+#   JIRA_BASE_URL
+#   JIRA_EMAIL
+#   JIRA_API_TOKEN
+#   SLACK_BOT_TOKEN
+#   SLACK_DM_CHANNEL_ID   U... user id (IM auto-opened) or D.../C... channel id
+#   ADMIN_SECRET          gates /run, /preview and /auth/start
+#
+# KV layout (CHECKIN_STATE):
+#   graph:refresh_token   current Entra refresh token (rotated on every use)
+#   pkce:<state>          code_verifier during an in-flight /auth flow (TTL 10 min)

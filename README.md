@@ -28,6 +28,9 @@ LINE version of the X/Twitter video bot.
 `bots/stagewatch/`
 Scheduled Worker that watches artist and event news pages, deduplicates updates in KV, and pushes new items to Telegram.
 
+`bots/daily-checkin/`
+Scheduled Worker that posts the daily work check-in to Slack (weekdays 10:00 JST): Outlook calendar via Graph API (rotating refresh token in KV, ICS publish URL as fallback) + Jira sprint tickets. When the tenant force-expires the token, the alert DM carries a permanent `/auth/start` link that re-seeds KV via Auth Code + PKCE.
+
 `services/clawbot/`
 Long-running WeChat bridge service that connects ilink with the ctxd worker.
 
