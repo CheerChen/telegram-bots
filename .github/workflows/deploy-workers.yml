@@ -1,0 +1,52 @@
+# Deploys all Cloudflare Workers on push to master. GitHub-hosted runner only.
+#
+# SECURITY NOTE (public repo): this workflow must never gain a pull_request
+# trigger — it uses a deploy secret and only the repo owner can push master.
+#
+# Required repo secret: CLOUDFLARE_API_TOKEN ("Edit Cloudflare Workers"
+# template, scoped to the account below).
+name: Deploy Workers
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "bots/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-workers.yml"
+
+concurrency:
+  group: deploy-workers
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: e77f59c260bfe0ae47e1e998e989eea0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - name: Deploy all workers
+        run: |
+          failed=""
+          for d in bots/*/; do
+            name=$(basename "$d")
+            echo "::group::deploy $name"
+            if ! (cd "$d" && pnpm exec wrangler deploy); then
+              failed="$failed $name"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "deploy failed for:$failed"
+            exit 1
+          fi
