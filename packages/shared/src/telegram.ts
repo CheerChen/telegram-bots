@@ -38,6 +38,8 @@ async function callApi<T = unknown>(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+    // Generous: sendVideo-by-URL blocks while Telegram downloads the file.
+    signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) {
     const detail = await res.text();

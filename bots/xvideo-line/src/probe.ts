@@ -6,7 +6,11 @@ export async function probeLineVideoUrl(
 ): Promise<boolean> {
   let res: Response;
   try {
-    res = await fetcher(url, { method: "HEAD", redirect: "follow" });
+    res = await fetcher(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(10_000),
+    });
   } catch {
     return false;
   }

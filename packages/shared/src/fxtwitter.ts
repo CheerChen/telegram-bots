@@ -124,6 +124,7 @@ export async function fetchTweet(statusId: string): Promise<FetchResult> {
   try {
     res = await fetch(`https://api.fxtwitter.com/2/status/${statusId}`, {
       headers: { "user-agent": "cc-xvideo-bot/0.1" },
+      signal: AbortSignal.timeout(15_000),
     });
   } catch (e) {
     return { kind: "error", reason: `network: ${(e as Error).message}` };

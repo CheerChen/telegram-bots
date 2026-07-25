@@ -68,7 +68,7 @@ interface JiraCommentsPage {
 
 async function getIssue(auth: JiraAuth, issueKey: string): Promise<JiraIssueResponse> {
     const url = `${auth.baseUrl}/rest/api/2/issue/${encodeURIComponent(issueKey)}?expand=renderedFields,names`;
-    const res = await fetch(url, { headers: authHeader(auth) });
+    const res = await fetch(url, { headers: authHeader(auth), signal: AbortSignal.timeout(20_000) });
     if (!res.ok) {
         const detail = await res.text().catch(() => "");
         throw new Error(`Jira API ${res.status}: ${detail.slice(0, 200)}`);
@@ -85,7 +85,7 @@ async function getComments(auth: JiraAuth, issueKey: string): Promise<JiraCommen
         const url =
             `${auth.baseUrl}/rest/api/2/issue/${encodeURIComponent(issueKey)}/comment` +
             `?startAt=${startAt}&maxResults=${maxResults}&expand=renderedBody`;
-        const res = await fetch(url, { headers: authHeader(auth) });
+        const res = await fetch(url, { headers: authHeader(auth), signal: AbortSignal.timeout(20_000) });
         if (!res.ok) break;
         const page = (await res.json()) as JiraCommentsPage;
         all.push(...page.comments);

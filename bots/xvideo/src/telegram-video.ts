@@ -43,6 +43,7 @@ export async function probeTelegramVideoUrl(
       method: "GET",
       headers: { range: "bytes=0-0", "user-agent": "cc-xvideo-bot/0.1" },
       redirect: "follow",
+      signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
     return { ok: false, reason: `probe failed: ${(e as Error).message}` };

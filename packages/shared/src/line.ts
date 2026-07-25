@@ -64,6 +64,8 @@ export async function replyMessages(
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ replyToken, messages }),
+    // Reply tokens are only valid ~60s; fail fast so callers can react.
+    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
     const detail = await res.text();
@@ -90,6 +92,7 @@ export async function pushText(token: string, userId: string, text: string): Pro
       to: userId,
       messages: [{ type: "text", text: text.slice(0, 5000) }],
     }),
+    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
     const detail = await res.text();

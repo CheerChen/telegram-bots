@@ -82,7 +82,7 @@ interface PaginatedResponse<T> {
 
 async function getPage(auth: AtlassianAuth, pageId: string): Promise<ConfluencePage> {
     const url = `${auth.baseUrl}/wiki/api/v2/pages/${pageId}?body-format=storage`;
-    const res = await fetch(url, { headers: authHeader(auth) });
+    const res = await fetch(url, { headers: authHeader(auth), signal: AbortSignal.timeout(20_000) });
     if (!res.ok) {
         const detail = await res.text().catch(() => "");
         throw new Error(`Confluence API ${res.status}: ${detail.slice(0, 200)}`);
@@ -96,7 +96,7 @@ async function getFooterComments(auth: AtlassianAuth, pageId: string): Promise<C
         `${auth.baseUrl}/wiki/api/v2/pages/${pageId}/footer-comments?limit=100&body-format=storage`;
 
     while (endpoint) {
-        const res = await fetch(endpoint, { headers: authHeader(auth) });
+        const res = await fetch(endpoint, { headers: authHeader(auth), signal: AbortSignal.timeout(20_000) });
         if (!res.ok) break;
         const data = (await res.json()) as PaginatedResponse<ConfluenceComment>;
         all.push(...data.results);

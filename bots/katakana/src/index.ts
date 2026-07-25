@@ -92,81 +92,93 @@ export default {
       return new Response("forbidden", { status: 403 });
     }
 
-    const update = (await req.json()) as TelegramUpdate;
-    const maxChats = parseInt(env.MAX_CHATS, 10) || 50;
-    if (!(await allowChatWithCap(update, env.CHATS, maxChats))) {
+    try {
+      const update = (await req.json()) as TelegramUpdate;
+      return await handleUpdate(update, env);
+    } catch (err) {
+      // Ack with 200 even on failure: a non-200 makes Telegram re-deliver the
+      // same update for hours (e.g. editMessageText 400 "message is not
+      // modified" when a retry produces identical text).
+      console.error("webhook handler failed", err);
       return new Response("ok");
     }
-
-    if (update.callback_query) {
-      const cb = update.callback_query;
-      if (cb.data?.startsWith(RETRY_PREFIX) && cb.message) {
-        const query = cb.data.slice(RETRY_PREFIX.length);
-        const chatId = cb.message.chat.id;
-        const messageId = cb.message.message_id;
-
-        await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cb.id);
-        await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-          chatId,
-          messageId,
-          text: loadingText(query, true),
-          parseMode: "HTML",
-          disableWebPagePreview: true,
-          replyMarkup: EMPTY_KEYBOARD,
-        });
-
-        const result = await lookup(query, env.KATAKANA_CACHE);
-        const { text, keyboard } = renderResult(result);
-        await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-          chatId,
-          messageId,
-          text,
-          parseMode: "HTML",
-          disableWebPagePreview: true,
-          replyMarkup: keyboard,
-        });
-      } else {
-        await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cb.id);
-      }
-      return new Response("ok");
-    }
-
-    const msg = update.message ?? update.edited_message;
-    const text = msg?.text?.trim();
-    if (!msg || !text) return new Response("ok");
-
-    if (text === "/start" || text === "/help") {
-      await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-        chatId: msg.chat.id,
-        text:
-          "👋 Send me a word and I'll return the Japanese reading.\n\n" +
-          "Examples:\n" +
-          "• <code>勉強</code> → べんきょう (study)\n" +
-          "• <code>computer</code> → コンピューター\n" +
-          "• <code>学习</code> → 学習（がくしゅう）\n\n" +
-          "If the lookup fails, tap 🔄 Retry on the error message.",
-        parseMode: "HTML",
-        disableWebPagePreview: true,
-      });
-      return new Response("ok");
-    }
-
-    const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-      chatId: msg.chat.id,
-      text: loadingText(text, false),
-      parseMode: "HTML",
-    });
-
-    const result = await lookup(text, env.KATAKANA_CACHE);
-    const { text: replyText, keyboard } = renderResult(result);
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-      chatId: msg.chat.id,
-      messageId: progressId,
-      text: replyText,
-      parseMode: "HTML",
-      disableWebPagePreview: true,
-      replyMarkup: keyboard,
-    });
-    return new Response("ok");
   },
 };
+
+async function handleUpdate(update: TelegramUpdate, env: Env): Promise<Response> {
+  const maxChats = parseInt(env.MAX_CHATS, 10) || 50;
+  if (!(await allowChatWithCap(update, env.CHATS, maxChats))) {
+    return new Response("ok");
+  }
+
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    if (cb.data?.startsWith(RETRY_PREFIX) && cb.message) {
+      const query = cb.data.slice(RETRY_PREFIX.length);
+      const chatId = cb.message.chat.id;
+      const messageId = cb.message.message_id;
+
+      await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cb.id);
+      await editMessageText(env.TELEGRAM_BOT_TOKEN, {
+        chatId,
+        messageId,
+        text: loadingText(query, true),
+        parseMode: "HTML",
+        disableWebPagePreview: true,
+        replyMarkup: EMPTY_KEYBOARD,
+      });
+
+      const result = await lookup(query, env.KATAKANA_CACHE);
+      const { text, keyboard } = renderResult(result);
+      await editMessageText(env.TELEGRAM_BOT_TOKEN, {
+        chatId,
+        messageId,
+        text,
+        parseMode: "HTML",
+        disableWebPagePreview: true,
+        replyMarkup: keyboard,
+      });
+    } else {
+      await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, cb.id);
+    }
+    return new Response("ok");
+  }
+
+  const msg = update.message ?? update.edited_message;
+  const text = msg?.text?.trim();
+  if (!msg || !text) return new Response("ok");
+
+  if (text === "/start" || text === "/help") {
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+      chatId: msg.chat.id,
+      text:
+        "👋 Send me a word and I'll return the Japanese reading.\n\n" +
+        "Examples:\n" +
+        "• <code>勉強</code> → べんきょう (study)\n" +
+        "• <code>computer</code> → コンピューター\n" +
+        "• <code>学习</code> → 学習（がくしゅう）\n\n" +
+        "If the lookup fails, tap 🔄 Retry on the error message.",
+      parseMode: "HTML",
+      disableWebPagePreview: true,
+    });
+    return new Response("ok");
+  }
+
+  const progressId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+    chatId: msg.chat.id,
+    text: loadingText(text, false),
+    parseMode: "HTML",
+  });
+
+  const result = await lookup(text, env.KATAKANA_CACHE);
+  const { text: replyText, keyboard } = renderResult(result);
+  await editMessageText(env.TELEGRAM_BOT_TOKEN, {
+    chatId: msg.chat.id,
+    messageId: progressId,
+    text: replyText,
+    parseMode: "HTML",
+    disableWebPagePreview: true,
+    replyMarkup: keyboard,
+  });
+  return new Response("ok");
+}

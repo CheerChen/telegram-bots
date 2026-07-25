@@ -98,6 +98,7 @@ async function slackApi<T extends SlackApiResponse>(
       "content-type": "application/x-www-form-urlencoded",
     },
     body,
+    signal: AbortSignal.timeout(20_000),
   });
   if (!res.ok) throw new Error(`slack ${method} http ${res.status}`);
   const json = (await res.json()) as T;
