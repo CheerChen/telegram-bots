@@ -582,7 +582,8 @@ function isAuthorized(req: Request, url: URL, env: Env): boolean {
 }
 
 // Cron expressions must stay in sync with wrangler.toml [triggers] crons.
-const CRON_UPDATE = "40 0 * * 1-5"; // 09:40 JST in-place update pass (00:40 UTC)
+// CF cron weekdays are 1-7 with 1=Sunday: 00:40 UTC Mon-Fri = 09:40 JST.
+const CRON_UPDATE = "40 0 * * 2-6";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {

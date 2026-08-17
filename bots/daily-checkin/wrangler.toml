@@ -6,11 +6,14 @@ compatibility_date = "2026-06-16"
 enabled = true
 
 [triggers]
-# JST weekdays: 07:55 send (22:55 UTC Sun-Thu — UTC weekday here is the day
-# BEFORE JST), 09:40 in-place update (00:40 UTC Mon-Fri), 10:15 retry
-# (01:15 UTC Mon-Fri). Keep in sync with CRON_UPDATE in src/index.ts.
-# NB: CF cron parser rejects ranges starting at 0 ("0-4") — use a comma list.
-crons = ["55 22 * * 0,1,2,3,4", "40 0 * * 1-5", "15 1 * * 1-5"]
+# JST weekdays. NB: CF cron weekdays are 1-7 with 1=Sunday (Quartz-style,
+# NOT the standard 0=Sunday). At late UTC hours the JST day has already
+# shifted forward, so DOW must be the UTC weekday of the day BEFORE.
+#   07:55 JST Mon-Fri = 22:55 UTC Sun-Thu  -> 1-5
+#   09:40 JST Mon-Fri = 00:40 UTC Mon-Fri  -> 2-6
+#   10:15 JST Mon-Fri = 01:15 UTC Mon-Fri  -> 2-6
+# Keep in sync with CRON_UPDATE in src/index.ts.
+crons = ["55 22 * * 1-5", "40 0 * * 2-6", "15 1 * * 2-6"]
 
 [[kv_namespaces]]
 binding = "CHECKIN_STATE"
