@@ -4,7 +4,7 @@
 // Schedule (JST weekdays, keep in sync with wrangler.toml + CRON_UPDATE):
 //   07:55  send first version (covers early starts) — skip if KV already sent today
 //   09:40  chat.update the message in place when the digest changed (silent otherwise)
-//   10:15  retry: send only when the 07:55 send never happened (KV key absent)
+//   10:00  retry: send only when the 07:55 send never happened (KV key absent)
 // Manual POST /run sends immediately and also writes the KV key, so cron skips.
 //
 // Ported from services/daily-checkin (Pi/Docker). MSAL is replaced with a raw
@@ -614,7 +614,7 @@ export default {
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const cron = controller.cron.trim();
-    // 09:40 JST (00:40 UTC) is the in-place update pass; the 07:55 and 10:15
+    // 09:40 JST (00:40 UTC) is the in-place update pass; the 07:55 and 10:00
     // crons are both "send" attempts (the later one is the fallback retry).
     const isUpdate = cron === CRON_UPDATE;
     console.log(
