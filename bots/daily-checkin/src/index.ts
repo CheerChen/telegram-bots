@@ -1,5 +1,11 @@
 // Daily check-in worker: Outlook calendar (Graph API, ICS fallback) + Jira
-// sprint tickets -> Slack DM. Cron fires 10:00 JST on weekdays.
+// sprint tickets -> Slack DM.
+//
+// Schedule (JST weekdays, keep in sync with wrangler.toml + CRON_UPDATE):
+//   07:55  send first version (covers early starts) — skip if KV already sent today
+//   09:40  chat.update the message in place when the digest changed (silent otherwise)
+//   10:15  retry: send only when the 07:55 send never happened (KV key absent)
+// Manual POST /run sends immediately and also writes the KV key, so cron skips.
 //
 // Ported from services/daily-checkin (Pi/Docker). MSAL is replaced with a raw
 // OAuth refresh_token grant; the rotating refresh token lives in KV. When the
@@ -55,6 +61,41 @@ function jstWindow(now: Date): { todayStr: string; dayStart: Date; dayEnd: Date 
 }
 
 // ---------------------------------------------------------------------------
+// Retry helper for idempotent reads (Graph/ICS/Jira). 429/5xx/network errors
+// and timeouts are retried up to 3x with backoff. Never used for the Slack
+// send path — posting is protected by the KV "sent today" key instead.
+// ---------------------------------------------------------------------------
+async function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function fetchRetry(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number },
+  attempts = 3,
+): Promise<Response> {
+  const { timeoutMs, signal: _ignored, ...rest } = init ?? {};
+  let lastErr: Error = new Error("fetch failed");
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) await sleep((i === 1 ? 1000 : 2000) + Math.floor(Math.random() * 400));
+    try {
+      const res = await fetch(url, {
+        ...rest,
+        signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
+      });
+      if (res.status === 429 || res.status >= 500) {
+        lastErr = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+      return res;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  throw lastErr;
+}
+
+// ---------------------------------------------------------------------------
 // Slack
 // ---------------------------------------------------------------------------
 async function slackApi(env: Env, method: string, body: unknown): Promise<Record<string, unknown>> {
@@ -80,12 +121,13 @@ async function resolveChannel(env: Env): Promise<string> {
   return (data.channel as { id: string }).id;
 }
 
-async function postSlack(env: Env, text: string, blocks?: unknown[]): Promise<void> {
+async function postSlack(env: Env, text: string, blocks?: unknown[]): Promise<string | undefined> {
   const channel = await resolveChannel(env);
   const payload: Record<string, unknown> = { channel, text };
   if (blocks) payload.blocks = blocks;
   const data = await slackApi(env, "chat.postMessage", payload);
   console.log(`[slack] sent: channel=${data.channel} ts=${data.ts}`);
+  return data.ts as string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +149,7 @@ async function getGraphAccessToken(env: Env): Promise<string> {
   const refreshToken = await env.CHECKIN_STATE.get(KV_REFRESH_TOKEN);
   if (!refreshToken) throw new Error("no refresh token in KV; visit /auth/start");
 
-  const res = await fetch(tokenEndpoint(env), {
+  const res = await fetchRetry(tokenEndpoint(env), {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -116,7 +158,7 @@ async function getGraphAccessToken(env: Env): Promise<string> {
       refresh_token: refreshToken,
       scope: GRAPH_SCOPE,
     }),
-    signal: AbortSignal.timeout(30000),
+    timeoutMs: 30000,
   });
   const data = (await res.json()) as TokenResponse;
   if (!res.ok || !data.access_token) {
@@ -150,12 +192,12 @@ async function fetchGraphEvents(env: Env, dayStart: Date, dayEnd: Date): Promise
     $orderby: "start/dateTime",
     $top: "50",
   });
-  const res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarView?${params}`, {
+  const res = await fetchRetry(`https://graph.microsoft.com/v1.0/me/calendarView?${params}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Prefer: 'outlook.timezone="Asia/Tokyo"',
     },
-    signal: AbortSignal.timeout(30000),
+    timeoutMs: 30000,
   });
   if (!res.ok) throw new Error(`Graph API ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = (await res.json()) as { value?: GraphEvent[] };
@@ -178,7 +220,7 @@ async function fetchGraphEvents(env: Env, dayStart: Date, dayEnd: Date): Promise
 // ---------------------------------------------------------------------------
 async function fetchIcsEvents(env: Env, dayStart: Date, dayEnd: Date): Promise<CalEvent[]> {
   console.log(`[ics] GET ${env.OUTLOOK_ICS_URL.slice(0, 60)}...`);
-  const res = await fetch(env.OUTLOOK_ICS_URL, { signal: AbortSignal.timeout(30000) });
+  const res = await fetchRetry(env.OUTLOOK_ICS_URL, { timeoutMs: 30000 });
   if (!res.ok) throw new Error(`ICS fetch failed: ${res.status}`);
   const icsText = await res.text();
 
@@ -272,7 +314,7 @@ async function fetchSprintIssues(env: Env): Promise<JiraIssue[]> {
     " AND assignee = currentUser()" +
     " AND statusCategory != Done";
   const auth = btoa(`${env.JIRA_EMAIL}:${env.JIRA_API_TOKEN}`);
-  const res = await fetch(url, {
+  const res = await fetchRetry(url, {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -280,7 +322,7 @@ async function fetchSprintIssues(env: Env): Promise<JiraIssue[]> {
       Authorization: `Basic ${auth}`,
     },
     body: JSON.stringify({ jql, fields: ["summary", "status"], maxResults: 50 }),
-    signal: AbortSignal.timeout(30000),
+    timeoutMs: 30000,
   });
   if (!res.ok) throw new Error(`Jira ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = (await res.json()) as { issues?: JiraIssue[] };
@@ -366,34 +408,86 @@ function composeCheckin(env: Env, events: CalEvent[], issues: JiraIssue[]): { te
 // ---------------------------------------------------------------------------
 // Check-in run
 // ---------------------------------------------------------------------------
-async function runCheckin(env: Env, send: boolean): Promise<string> {
-  const { todayStr, dayStart, dayEnd } = jstWindow(new Date());
-  console.log(`[time] JST today = ${todayStr}`);
+const KV_DAILY_KEY = "checkin:today:";
+const KV_DAILY_TTL = 4 * 86400; // cover send + fallback + edit window (and weekends)
 
-  let events: CalEvent[];
+/** Graph calendar with the existing ICS + re-auth alert fallback. */
+async function fetchEvents(env: Env, dayStart: Date, dayEnd: Date, alertFallback: boolean): Promise<CalEvent[]> {
   try {
-    events = await fetchGraphEvents(env, dayStart, dayEnd);
+    return await fetchGraphEvents(env, dayStart, dayEnd);
   } catch (exc) {
     const msg = exc instanceof Error ? exc.message : String(exc);
     console.log(`[graph] unavailable, fallback to ICS: ${msg}`);
-    try {
-      await postSlack(
-        env,
-        `:warning: daily-checkin: Graph auth failed, fell back to ICS.\n` +
-          `Re-auth (any device, link never expires): ${authStartUrl(env)}\n` +
-          `detail: ${msg}`,
-      );
-    } catch (notifyExc) {
-      console.log(`[graph] auth alert failed: ${notifyExc}`);
+    if (alertFallback) {
+      try {
+        await postSlack(
+          env,
+          `:warning: daily-checkin: Graph auth failed, fell back to ICS.\n` +
+            `Re-auth (any device, link never expires): ${authStartUrl(env)}\n` +
+            `detail: ${msg}`,
+        );
+      } catch (notifyExc) {
+        console.log(`[graph] auth alert failed: ${notifyExc}`);
+      }
     }
-    events = await fetchIcsEvents(env, dayStart, dayEnd);
+    return fetchIcsEvents(env, dayStart, dayEnd);
   }
+}
 
+/** Fetch calendar + sprint and compose the message (no send, no KV). */
+async function fetchAndCompose(env: Env, alertFallback: boolean): Promise<{ text: string; blocks: unknown[] }> {
+  const { todayStr, dayStart, dayEnd } = jstWindow(new Date());
+  console.log(`[time] JST today = ${todayStr}`);
+  const events = await fetchEvents(env, dayStart, dayEnd, alertFallback);
   const issues = await fetchSprintIssues(env);
   const { text, blocks } = composeCheckin(env, events, issues);
   console.log(`[compose] message:\n${text}`);
+  return { text, blocks };
+}
 
-  if (send) await postSlack(env, text, blocks);
+/**
+ * First send of the day: post, then record KV { ts, digest }.
+ * The KV key doubles as the "already sent today" lock — later triggers (retry
+ * cron, manual /run) skip once it exists, so at most one message/day except in
+ * the tiny window of a crash between postMessage and the KV write.
+ */
+async function runCheckinSend(env: Env): Promise<string> {
+  const { todayStr } = jstWindow(new Date());
+  const key = `${KV_DAILY_KEY}${todayStr}`;
+  if (await env.CHECKIN_STATE.get(key)) {
+    console.log(`[send] ${todayStr} already sent; skip`);
+    return `${todayStr}: already sent; skip`;
+  }
+  const { text, blocks } = await fetchAndCompose(env, true);
+  const ts = await postSlack(env, text, blocks);
+  await env.CHECKIN_STATE.put(key, JSON.stringify({ ts, digest: text }), { expirationTtl: KV_DAILY_TTL });
+  console.log(`[send] ${todayStr} sent ts=${ts}`);
+  return text;
+}
+
+/**
+ * In-place completion: re-fetch and chat.update the sent message when the
+ * composed digest changed (late MTG/tickets). No-op when nothing changed or
+ * when no message was sent yet today.
+ */
+async function runCheckinUpdate(env: Env): Promise<string> {
+  const { todayStr } = jstWindow(new Date());
+  const key = `${KV_DAILY_KEY}${todayStr}`;
+  const raw = await env.CHECKIN_STATE.get(key);
+  if (!raw) {
+    console.log(`[update] ${todayStr} not sent yet; skip`);
+    return `${todayStr}: no message yet; skip update`;
+  }
+  const stored = JSON.parse(raw) as { ts: string; digest: string };
+  const { text, blocks } = await fetchAndCompose(env, false);
+  if (text === stored.digest) {
+    console.log(`[update] ${todayStr} no digest change; skip`);
+    return `${todayStr}: no change; skip update`;
+  }
+  const channel = await resolveChannel(env);
+  await slackApi(env, "chat.update", { channel, ts: stored.ts, text, blocks });
+  await env.CHECKIN_STATE.put(key, JSON.stringify({ ts: stored.ts, digest: text }), { expirationTtl: KV_DAILY_TTL });
+  console.log(`[update] ${todayStr} updated ts=${stored.ts}`);
   return text;
 }
 
@@ -487,6 +581,9 @@ function isAuthorized(req: Request, url: URL, env: Env): boolean {
   );
 }
 
+// Cron expressions must stay in sync with wrangler.toml [triggers] crons.
+const CRON_UPDATE = "40 0 * * 1-5"; // 09:40 JST in-place update pass (00:40 UTC)
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -500,23 +597,31 @@ export default {
 
     if (url.pathname === "/preview") {
       if (!isAuthorized(req, url, env)) return new Response("forbidden", { status: 403 });
-      const text = await runCheckin(env, false);
+      const text = (await fetchAndCompose(env, false)).text;
       return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8" } });
     }
 
     if (url.pathname === "/run") {
       if (req.method !== "POST") return new Response("POST only", { status: 405 });
       if (!isAuthorized(req, url, env)) return new Response("forbidden", { status: 403 });
-      const text = await runCheckin(env, true);
-      return new Response(`sent\n\n${text}`, { headers: { "content-type": "text/plain; charset=utf-8" } });
+      const text = await runCheckinSend(env);
+      return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8" } });
     }
 
     return new Response("not found", { status: 404 });
   },
 
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const cron = controller.cron.trim();
+    // 09:40 JST (00:40 UTC) is the in-place update pass; the 07:55 and 10:15
+    // crons are both "send" attempts (the later one is the fallback retry).
+    const isUpdate = cron === CRON_UPDATE;
+    console.log(
+      `[cron] fired scheduledTime=${new Date(controller.scheduledTime).toISOString()} cron=${cron} job=${isUpdate ? "update" : "send"}`,
+    );
+    const job = isUpdate ? runCheckinUpdate(env) : runCheckinSend(env);
     ctx.waitUntil(
-      runCheckin(env, true).catch(async (exc) => {
+      job.catch(async (exc) => {
         // Fail loud: any crash (Jira down, ICS broken, Slack error) lands in the DM.
         const msg = exc instanceof Error ? exc.message : String(exc);
         console.log(`[cron] run failed: ${msg}`);

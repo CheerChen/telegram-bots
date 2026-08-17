@@ -6,8 +6,10 @@ compatibility_date = "2026-06-16"
 enabled = true
 
 [triggers]
-# 10:00 JST on weekdays (01:00 UTC; JST date == UTC date at this hour)
-crons = ["0 1 * * 1-5"]
+# JST weekdays: 07:55 send (22:55 UTC Sun-Thu — UTC weekday here is the day
+# BEFORE JST), 09:40 in-place update (00:40 UTC Mon-Fri), 10:15 retry
+# (01:15 UTC Mon-Fri). Keep in sync with CRON_UPDATE in src/index.ts.
+crons = ["55 22 * * 0-4", "40 0 * * 1-5", "15 1 * * 1-5"]
 
 [[kv_namespaces]]
 binding = "CHECKIN_STATE"
@@ -30,5 +32,8 @@ MIN_MEETING_TITLE_LENGTH = "5"
 #   ADMIN_SECRET          gates /run, /preview and /auth/start
 #
 # KV layout (CHECKIN_STATE):
-#   graph:refresh_token   current Entra refresh token (rotated on every use)
-#   pkce:<state>          code_verifier during an in-flight /auth flow (TTL 10 min)
+#   graph:refresh_token    current Entra refresh token (rotated on every use)
+#   checkin:today:<date>   { ts, digest } from the day's first successful send (TTL 4d);
+#                          doubles as the "already sent" lock; the 09:40 pass
+#                          chat.update's this message when the digest changed
+#   pkce:<state>           code_verifier during an in-flight /auth flow (TTL 10 min)
