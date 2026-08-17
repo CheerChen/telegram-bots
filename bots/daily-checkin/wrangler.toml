@@ -9,7 +9,8 @@ enabled = true
 # JST weekdays: 07:55 send (22:55 UTC Sun-Thu — UTC weekday here is the day
 # BEFORE JST), 09:40 in-place update (00:40 UTC Mon-Fri), 10:15 retry
 # (01:15 UTC Mon-Fri). Keep in sync with CRON_UPDATE in src/index.ts.
-crons = ["55 22 * * 0-4", "40 0 * * 1-5", "15 1 * * 1-5"]
+# NB: CF cron parser rejects ranges starting at 0 ("0-4") — use a comma list.
+crons = ["55 22 * * 0,1,2,3,4", "40 0 * * 1-5", "15 1 * * 1-5"]
 
 [[kv_namespaces]]
 binding = "CHECKIN_STATE"
