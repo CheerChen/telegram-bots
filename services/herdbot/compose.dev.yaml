@@ -1,0 +1,42 @@
+# Local development compose — build + run on the Mac.
+# `image:` matches the registry path so `make build` produces a tag ready to push.
+# Pi deployments use compose.yaml (no build, pull from registry).
+#
+# On the Mac there is no /home/pi, so ctxd won't be available inside the
+# container. For local dev, run `pnpm dev` (host Node) instead of Docker,
+# and set CTXD_BIN to the host ctxd path in .env.
+
+services:
+  herdbot:
+    build:
+      context: ../..
+      dockerfile: services/herdbot/Dockerfile
+      platforms:
+        - linux/arm64
+    image: ${REGISTRY_URL:-192.168.0.110:5000}/herdbot:${TAG:-latest}
+    container_name: herdbot-dev
+    restart: unless-stopped
+    environment:
+      HERD_DATA_DIR: /app/services/herdbot/data
+      CTXD_BIN: ${CTXD_BIN:-/home/pi/.local/bin/ctxd}
+      HOME: /root
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      ALLOWED_CHAT_ID: "${ALLOWED_CHAT_ID:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_AUTH_TOKEN: "${ANTHROPIC_AUTH_TOKEN:-}"
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
+      CLAUDE_MODEL: "${CLAUDE_MODEL:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      SLACK_TOKEN: "${SLACK_TOKEN:-}"
+      ATLASSIAN_BASE_URL: "${ATLASSIAN_BASE_URL:-}"
+      ATLASSIAN_EMAIL: "${ATLASSIAN_EMAIL:-}"
+      ATLASSIAN_API_TOKEN: "${ATLASSIAN_API_TOKEN:-}"
+      HERD_IDLE_TIMEOUT_MS: "${HERD_IDLE_TIMEOUT_MS:-7200000}"
+      ALERT_CHAT_ID: "${ALERT_CHAT_ID:-}"
+    volumes:
+      - ./data:/app/services/herdbot/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

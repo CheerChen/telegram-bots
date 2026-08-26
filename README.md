@@ -31,6 +31,9 @@ Scheduled Worker that watches artist and event news pages, deduplicates updates 
 `bots/daily-checkin/`
 Scheduled Worker that posts the daily work check-in to Slack (weekdays 10:00 JST): Outlook calendar via Graph API (rotating refresh token in KV, ICS publish URL as fallback) + Jira sprint tickets. When the tenant force-expires the token, the alert DM carries a permanent `/auth/start` link that re-seeds KV via Auth Code + PKCE.
 
+`services/herdbot/`
+Telegram agent bot that takes Slack / GitHub PR / Jira / Confluence links, shells out to the `ctxd` CLI for full-context fetches, and runs a Claude Agent SDK loop for multi-turn conversation. Replaces the `bots/ctxd` Cloudflare Worker (which couldn't run subprocesses and maintained a degraded reimplementation). Runs on the home Pi via Docker; long polling means no inbound port needed. Session state persists to disk with idle-timeout page-turning and one-tap resume.
+
 `services/clawbot/`
 Long-running WeChat bridge service that connects ilink with the ctxd worker.
 

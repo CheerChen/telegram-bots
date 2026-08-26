@@ -1,0 +1,49 @@
+# Deployment compose — pasted into Dockge's Stack editor on the Pi.
+# No `build:` block: the Pi pulls the image from the private registry.
+# For local Docker iteration, use compose.dev.yaml instead.
+#
+# ctxd is prepared on the Pi host (uv tool install + ~/.config/ctxd/config)
+# and bind-mounted into the container. The container uses Debian (glibc) so
+# it can run the host's Python venv directly.
+#
+# The ctxd shebang is an absolute path (/home/pi/.local/share/uv/tools/ctxd/
+# bin/python), so we mount /home/pi/.local at the same path inside the
+# container to keep the shebang valid without patching.
+
+services:
+  herdbot:
+    image: ${REGISTRY_URL:-192.168.0.110:5000}/herdbot:${TAG:-latest}
+    container_name: herdbot
+    restart: unless-stopped
+    environment:
+      HERD_DATA_DIR: /app/services/herdbot/data
+      CTXD_BIN: /home/pi/.local/bin/ctxd
+      HOME: /root
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      ALLOWED_CHAT_ID: "${ALLOWED_CHAT_ID:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_AUTH_TOKEN: "${ANTHROPIC_AUTH_TOKEN:-}"
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
+      CLAUDE_MODEL: "${CLAUDE_MODEL:-}"
+      # ctxd credentials — also readable from the mounted config file, but
+      # setting them as env vars takes precedence and keeps config.ts simple.
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      SLACK_TOKEN: "${SLACK_TOKEN:-}"
+      ATLASSIAN_BASE_URL: "${ATLASSIAN_BASE_URL:-}"
+      ATLASSIAN_EMAIL: "${ATLASSIAN_EMAIL:-}"
+      ATLASSIAN_API_TOKEN: "${ATLASSIAN_API_TOKEN:-}"
+      HERD_IDLE_TIMEOUT_MS: "${HERD_IDLE_TIMEOUT_MS:-7200000}"
+      ALERT_CHAT_ID: "${ALERT_CHAT_ID:-}"
+    volumes:
+      # Session data (survives container restarts)
+      - /opt/herdbot/data:/app/services/herdbot/data
+      # ctxd binary + its uv-managed Python venv. Mounted at the same path
+      # as the host because ctxd's shebang is an absolute path.
+      - /home/pi/.local:/home/pi/.local:ro
+      # ctxd config (credentials — read-only)
+      - /home/pi/.config/ctxd:/root/.config/ctxd:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

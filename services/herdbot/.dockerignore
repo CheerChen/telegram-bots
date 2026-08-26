@@ -1,0 +1,26 @@
+# Build context is the repo root, so this file lives at services/herdbot/.dockerignore
+# but ignores apply relative to the context root.
+
+**/node_modules
+**/.wrangler
+**/.dev.vars
+**/dist
+**/.DS_Store
+**/*.log
+**/data
+**/.env
+**/.env.local
+.git
+.gitignore
+.github
+LICENSE
+README.md
+docs
+archives
+bots
+services/herdbot/Makefile
+services/herdbot/Makefile.local
+services/herdbot/compose.yaml
+services/herdbot/.dockerignore
+services/herdbot/.env*
+services/herdbot/herdbot.local.md

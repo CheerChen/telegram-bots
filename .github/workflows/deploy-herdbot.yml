@@ -1,0 +1,50 @@
+# Builds herdbot natively on the Pi (arm64) and deploys the Dockge stack.
+# Runs on the self-hosted runner — the only jobs that need LAN access
+# (private registry + /opt/stacks).
+#
+# SECURITY NOTE (public repo): this workflow must never gain a pull_request
+# trigger — it executes on the Pi and only the repo owner can push master.
+name: Deploy herdbot
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "services/herdbot/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-herdbot.yml"
+
+concurrency:
+  group: deploy-herdbot
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: [self-hosted, pi]
+    env:
+      REGISTRY: 192.168.0.110:5000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # pnpm's local store persists on the runner, so repeat installs are fast.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter herdbot typecheck
+      - name: Build image (native arm64)
+        run: |
+          SHA=${GITHUB_SHA::12}
+          docker build -f services/herdbot/Dockerfile \
+            -t "$REGISTRY/herdbot:$SHA" -t "$REGISTRY/herdbot:latest" .
+      - name: Push (immutable SHA tag + latest alias)
+        run: |
+          SHA=${GITHUB_SHA::12}
+          docker push "$REGISTRY/herdbot:$SHA"
+          docker push "$REGISTRY/herdbot:latest"
+      - name: Deploy stack
+        run: |
+          cd /opt/stacks/herdbot
+          sudo docker compose pull
+          sudo docker compose up -d
