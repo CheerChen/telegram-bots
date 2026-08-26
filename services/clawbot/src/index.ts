@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 
 import { loadConfig } from "./config.ts";
+import { ModelPool } from "./model-pool.ts";
 import { ClawState } from "./state.ts";
 import { startWebServer } from "./web/server.ts";
 
@@ -13,7 +14,13 @@ async function main(): Promise<void> {
     mkdir(config.mediaDir, { recursive: true }),
   ]);
 
-  const state = new ClawState(config);
+  const pool = new ModelPool(config.llmApiKeys, {
+    apiBaseUrl: config.llmApiBaseUrl,
+    compatBaseUrl: config.llmCompatBaseUrl,
+  });
+  await pool.init();
+
+  const state = new ClawState(config, pool);
   const web = await startWebServer({ state, port: config.port, host: config.host });
 
   await state.boot();

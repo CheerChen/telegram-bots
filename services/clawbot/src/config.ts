@@ -11,9 +11,12 @@ export interface ClawConfig {
   mediaDir: string;
   botType: string | undefined;
   botAgent: string;
-  llmBaseUrl: string | undefined;
-  llmApiKey: string | undefined;
-  llmModel: string | undefined;
+  // Model pool: comma-separated API keys. The pool auto-discovers available
+  // models from the DashScope catalog at startup.
+  llmApiKeys: string[];
+  // Override the DashScope API base (for non-intl endpoints).
+  llmApiBaseUrl: string;
+  llmCompatBaseUrl: string;
   workerSecret: string | undefined;
   workers: {
     ctxd: string | undefined;
@@ -36,9 +39,14 @@ export function loadConfig(): ClawConfig {
     mediaDir: resolve(dataDir, "media"),
     botType: process.env.ILINK_BOT_TYPE?.trim() || undefined,
     botAgent: process.env.CLAW_BOT_AGENT?.trim() || "clawbot/0.1.0",
-    llmBaseUrl: process.env.LLM_BASE_URL?.trim() || undefined,
-    llmApiKey: process.env.LLM_API_KEY?.trim() || undefined,
-    llmModel: process.env.LLM_MODEL?.trim() || undefined,
+    llmApiKeys: (process.env.LLM_API_KEYS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    llmApiBaseUrl: process.env.LLM_API_BASE_URL?.trim() || "https://dashscope-intl.aliyuncs.com",
+    llmCompatBaseUrl:
+      process.env.LLM_COMPAT_BASE_URL?.trim() ||
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     workerSecret: process.env.CLAW_WORKER_SECRET?.trim() || undefined,
     workers: {
       ctxd: process.env.WORKER_URL_CTXD?.trim() || undefined,

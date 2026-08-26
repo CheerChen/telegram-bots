@@ -2,6 +2,7 @@ import { extractText, sendTextMessage } from "ilink/protocol";
 import type { WeixinMessage } from "ilink/types";
 
 import type { ClawConfig } from "./config.ts";
+import type { ModelPool } from "./model-pool.ts";
 import {
   handleImageMessage,
   handleChatMessage,
@@ -37,6 +38,7 @@ function logLine(mode: string, from: string, text: string, result: string, ms?: 
 
 export interface RouterContext {
   config: ClawConfig;
+  pool: ModelPool;
   baseUrl: string;
   token: string;
   recordHandlerCall(
@@ -143,7 +145,7 @@ async function handleImageIfPresent(
   if (!hasImage) return false;
 
   const t0 = Date.now();
-  const result = await handleImageMessage(ctx.config, fromUserId, message);
+  const result = await handleImageMessage(ctx.config, ctx.pool, fromUserId, message);
   const ms = Date.now() - t0;
   await sendMessages(ctx, fromUserId, result.messages, contextToken);
   ctx.recordHandlerCall("chat", result.ok ? "ok" : "error", ms, result.error);
@@ -213,7 +215,7 @@ async function handleChat(
   batchSize = 1,
 ): Promise<void> {
   const t0 = Date.now();
-  const result = await handleChatMessage(ctx.config, fromUserId, text);
+  const result = await handleChatMessage(ctx.config, ctx.pool, fromUserId, text);
   const ms = Date.now() - t0;
   await sendMessages(ctx, fromUserId, result.messages, contextToken);
   ctx.recordHandlerCall("chat", result.ok ? "ok" : "error", ms, result.error);
