@@ -11,7 +11,8 @@
     "./llm": "./src/llm.ts",
     "./session": "./src/session.ts",
     "./dict": "./src/dict.ts",
-    "./fxtwitter": "./src/fxtwitter.ts"
+    "./fxtwitter": "./src/fxtwitter.ts",
+    "./weibo": "./src/weibo.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251101.0",

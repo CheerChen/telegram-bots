@@ -120,6 +120,44 @@ export async function deleteMessage(
   await callApi(token, "deleteMessage", { chat_id: chatId, message_id: messageId });
 }
 
+export interface SendVideoFileOptions {
+  chatId: number | string;
+  video: ArrayBuffer | Uint8Array;
+  filename: string;
+  caption?: string;
+  parseMode?: ParseMode;
+  replyToMessageId?: number;
+  supportsStreaming?: boolean;
+}
+
+export async function sendVideoFile(
+  token: string,
+  opts: SendVideoFileOptions,
+): Promise<number> {
+  const data = opts.video instanceof Uint8Array ? opts.video : new Uint8Array(opts.video);
+  const form = new FormData();
+  form.append("chat_id", String(opts.chatId));
+  form.append("video", new Blob([data], { type: "video/mp4" }), opts.filename);
+  if (opts.caption) form.append("caption", opts.caption);
+  if (opts.parseMode) form.append("parse_mode", opts.parseMode);
+  if (opts.replyToMessageId !== undefined)
+    form.append("reply_to_message_id", String(opts.replyToMessageId));
+  if (opts.supportsStreaming) form.append("supports_streaming", "true");
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`telegram sendVideo ${res.status}: ${detail.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as SendMessageResponse;
+  if (!json.result?.message_id) throw new Error("telegram sendVideo: no message_id");
+  return json.result.message_id;
+}
+
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

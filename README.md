@@ -20,7 +20,7 @@ LINE version of the katakana lookup bot.
 Telegram bot that takes Slack links and returns summaries, translations, or draft replies.
 
 `bots/xvideo/`
-Telegram bot for X/Twitter video extraction and delivery.
+Telegram bot for X/Twitter and Weibo video extraction and delivery.
 
 `bots/xvideo-line/`
 LINE version of the X/Twitter video bot.

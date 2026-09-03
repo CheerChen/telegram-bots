@@ -1,6 +1,7 @@
 import { allowChatWithCap, verifyWebhookSecret } from "shared/auth";
 import { extractStatusId, fetchTweet } from "shared/fxtwitter";
-import { escapeHtml, sendMessage, sendVideo } from "shared/telegram";
+import { fetchWeiboPost, extractWeiboId } from "shared/weibo";
+import { escapeHtml, sendMessage, sendVideo, sendVideoFile } from "shared/telegram";
 import type { TelegramUpdate } from "shared/types";
 import { isTelegramSendable, probeTelegramVideoUrl } from "./telegram-video.ts";
 
@@ -47,11 +48,15 @@ async function handleUpdate(update: TelegramUpdate, env: Env): Promise<Response>
     await sendMessage(env.TELEGRAM_BOT_TOKEN, {
       chatId: msg.chat.id,
       text:
-        "👋 Send me an X / Twitter post URL and I'll grab the video.\n\n" +
-        "Example:\n" +
-        "<code>https://x.com/user/status/1234567890</code>\n\n" +
-        "Supported hosts: x.com, twitter.com, fxtwitter.com, vxtwitter.com, fixupx.com\n" +
-        "Videos >20MB will come back as a direct link instead of an inline player.",
+        "👋 Send me a post URL and I'll grab the video.\n\n" +
+        "X / Twitter:\n" +
+        "<code>https://x.com/user/status/1234567890</code>\n" +
+        "Supported hosts: x.com, twitter.com, fxtwitter.com, vxtwitter.com, fixupx.com\n\n" +
+        "Weibo:\n" +
+        "<code>https://weibo.com/1195908387/RfO2JFuk3</code>\n" +
+        "Supported hosts: weibo.com, m.weibo.cn\n\n" +
+        "X/Twitter videos >20MB come back as a direct link.\n" +
+        "Weibo videos are downloaded and uploaded (no size limit).",
       parseMode: "HTML",
       disableWebPagePreview: true,
     });
@@ -59,15 +64,28 @@ async function handleUpdate(update: TelegramUpdate, env: Env): Promise<Response>
   }
 
   const statusId = extractStatusId(text);
-  if (!statusId) {
-    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-      chatId: msg.chat.id,
-      text: "Send me an X/Twitter post URL.",
-      replyToMessageId: msg.message_id,
-    });
-    return new Response("ok");
+  if (statusId) {
+    return await handleTwitter(statusId, msg, env);
   }
 
+  const weiboId = extractWeiboId(text);
+  if (weiboId) {
+    return await handleWeibo(weiboId, msg, env);
+  }
+
+  await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+    chatId: msg.chat.id,
+    text: "Send me an X/Twitter or Weibo post URL.",
+    replyToMessageId: msg.message_id,
+  });
+  return new Response("ok");
+}
+
+async function handleTwitter(
+  statusId: string,
+  msg: NonNullable<TelegramUpdate["message"]>,
+  env: Env,
+): Promise<Response> {
   const result = await fetchTweet(statusId);
 
   if (result.kind === "error") {
@@ -132,6 +150,80 @@ async function handleUpdate(update: TelegramUpdate, env: Env): Promise<Response>
       parseMode: "HTML",
       replyToMessageId: msg.message_id,
     });
+  }
+  return new Response("ok");
+}
+
+async function handleWeibo(
+  weiboId: string,
+  msg: NonNullable<TelegramUpdate["message"]>,
+  env: Env,
+): Promise<Response> {
+  const result = await fetchWeiboPost(weiboId);
+
+  if (result.kind === "error") {
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+      chatId: msg.chat.id,
+      text: `⚠️ <code>${escapeHtml(result.reason)}</code>`,
+      parseMode: "HTML",
+      replyToMessageId: msg.message_id,
+    });
+    return new Response("ok");
+  }
+
+  if (result.kind === "novideo") {
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+      chatId: msg.chat.id,
+      text: "No video found in that Weibo post.",
+      replyToMessageId: msg.message_id,
+    });
+    return new Response("ok");
+  }
+
+  const { post } = result;
+  const author = post.author ?? "";
+  const body = post.text ?? "";
+  const baseCaption = [author, body].filter(Boolean).join("\n").slice(0, 900);
+  const total = post.videos.length;
+
+  // Download and upload each video sequentially.
+  // Weibo CDN requires Referer: https://weibo.com/ on download.
+  for (let i = 0; i < post.videos.length; i++) {
+    const video = post.videos[i]!;
+    const index = i + 1;
+    const caption =
+      total > 1
+        ? `${baseCaption}\n(${index}/${total})`
+        : baseCaption;
+
+    try {
+      const res = await fetch(video.url, {
+        headers: { referer: "https://weibo.com/", "user-agent": "cc-xvideo-bot/0.1" },
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!res.ok) throw new Error(`download http ${res.status}`);
+
+      const buf = await res.arrayBuffer();
+      await sendVideoFile(env.TELEGRAM_BOT_TOKEN, {
+        chatId: msg.chat.id,
+        video: buf,
+        filename: `weibo_${post.mblogid ?? weiboId}_${index}.mp4`,
+        caption: caption.slice(0, 1024),
+        supportsStreaming: true,
+        replyToMessageId: i === 0 ? msg.message_id : undefined,
+      });
+    } catch (e) {
+      // Fallback: send direct link if download/upload fails.
+      await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+        chatId: msg.chat.id,
+        text:
+          `📹 ${escapeHtml(caption)}\n` +
+          `<a href="${escapeHtml(video.url)}">direct link</a>\n` +
+          `<i>${escapeHtml((e as Error).message)}</i>`,
+        parseMode: "HTML",
+        replyToMessageId: msg.message_id,
+      });
+    }
   }
   return new Response("ok");
 }
