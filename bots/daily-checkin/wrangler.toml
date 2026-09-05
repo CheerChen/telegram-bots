@@ -10,10 +10,10 @@ enabled = true
 # NOT the standard 0=Sunday). At late UTC hours the JST day has already
 # shifted forward, so DOW must be the UTC weekday of the day BEFORE.
 #   07:55 JST Mon-Fri = 22:55 UTC Sun-Thu  -> 1-5
-#   09:40 JST Mon-Fri = 00:40 UTC Mon-Fri  -> 2-6
-#   10:00 JST Mon-Fri = 01:00 UTC Mon-Fri  -> 2-6
-# Keep in sync with CRON_UPDATE in src/index.ts.
-crons = ["55 22 * * 1-5", "40 0 * * 2-6", "0 1 * * 2-6"]
+# Merged from 3 crons to 1 to free up Workers Free cron trigger quota.
+# The 09:40 in-place update and 10:00 retry passes were dropped; the 07:55
+# send is idempotent via the KV "sent today" key.
+crons = ["55 22 * * 1-5"]
 
 [[kv_namespaces]]
 binding = "CHECKIN_STATE"

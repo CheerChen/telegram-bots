@@ -1,10 +1,9 @@
 // Daily check-in worker: Outlook calendar (Graph API, ICS fallback) + Jira
 // sprint tickets -> Slack DM.
 //
-// Schedule (JST weekdays, keep in sync with wrangler.toml + CRON_UPDATE):
-//   07:55  send first version (covers early starts) — skip if KV already sent today
-//   09:40  chat.update the message in place when the digest changed (silent otherwise)
-//   10:00  retry: send only when the 07:55 send never happened (KV key absent)
+// Schedule: single cron at 07:55 JST weekdays (22:55 UTC Sun-Thu).
+// Previously had 3 crons (07:55 send, 09:40 update, 10:00 retry) but merged
+// to 1 to free up Workers Free cron trigger quota. Send is idempotent via KV.
 // Manual POST /run sends immediately and also writes the KV key, so cron skips.
 //
 // Ported from services/daily-checkin (Pi/Docker). MSAL is replaced with a raw
@@ -581,10 +580,9 @@ function isAuthorized(req: Request, url: URL, env: Env): boolean {
   );
 }
 
-// Cron expressions must stay in sync with wrangler.toml [triggers] crons.
-// CF cron weekdays are 1-7 with 1=Sunday: 00:40 UTC Mon-Fri = 09:40 JST.
-const CRON_UPDATE = "40 0 * * 2-6";
-
+// Cron: single trigger at 07:55 JST (22:55 UTC Sun-Thu). Merged from 3 crons
+// to free up Workers Free cron trigger quota. The 09:40 in-place update and
+// 10:00 retry passes were dropped; the send is idempotent via KV "sent today".
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -613,16 +611,11 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    const cron = controller.cron.trim();
-    // 09:40 JST (00:40 UTC) is the in-place update pass; the 07:55 and 10:00
-    // crons are both "send" attempts (the later one is the fallback retry).
-    const isUpdate = cron === CRON_UPDATE;
     console.log(
-      `[cron] fired scheduledTime=${new Date(controller.scheduledTime).toISOString()} cron=${cron} job=${isUpdate ? "update" : "send"}`,
+      `[cron] fired scheduledTime=${new Date(controller.scheduledTime).toISOString()} cron=${controller.cron}`,
     );
-    const job = isUpdate ? runCheckinUpdate(env) : runCheckinSend(env);
     ctx.waitUntil(
-      job.catch(async (exc) => {
+      runCheckinSend(env).catch(async (exc) => {
         // Fail loud: any crash (Jira down, ICS broken, Slack error) lands in the DM.
         const msg = exc instanceof Error ? exc.message : String(exc);
         console.log(`[cron] run failed: ${msg}`);
