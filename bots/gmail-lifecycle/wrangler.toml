@@ -1,0 +1,41 @@
+name = "gmail-lifecycle"
+main = "src/index.ts"
+compatibility_date = "2026-06-16"
+
+[observability]
+enabled = true
+
+# Daily 03:00 UTC = 12:00 JST. Inbox scan runs once per day.
+[triggers]
+crons = ["0 3 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gmail-lifecycle"
+database_id = "42dad06b-9225-4739-8625-42064733a9b7"
+
+[[kv_namespaces]]
+binding = "GMAIL_STATE"
+id = "51fb1cf80672440d95987fb178811f9c"
+
+[vars]
+LABEL_PREFIX = "Domains"
+ARCHIVE_PREFIX = "Domains/_archive"
+PROMOTE_WINDOW_DAYS = "90"
+PROMOTE_MIN_EMAILS = "5"
+EVICT_ARCHIVE_DAYS = "180"
+EVICT_DELETE_DAYS = "365"
+# Message IDs listed per run. From headers are fetched via the Gmail batch
+# endpoint (50 per subrequest), so 500 messages cost ~5 list + ~10 batch calls,
+# well inside the Free plan's 50 subrequests per invocation.
+SCAN_MAX_MESSAGES = "500"
+
+# Secrets (set via `pnpm secrets:push` after filling .dev.vars):
+#   GMAIL_CLIENT_ID        Google OAuth client ID
+#   GMAIL_CLIENT_SECRET    Google OAuth client secret
+#   GMAIL_REFRESH_TOKEN    refresh token (obtained via local auth helper)
+#   ADMIN_SECRET           gates /run, /migrate, /status
+#
+# KV layout (GMAIL_STATE):
+#   gmail:refresh_token    current refresh token (Google does NOT rotate by default,
+#                          but we persist it anyway in case it changes)

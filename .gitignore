@@ -4,6 +4,7 @@ dist/
 .dev.vars
 .env
 .env.local
+credentials.json
 *.log
 .DS_Store
 .pnpm-store/
