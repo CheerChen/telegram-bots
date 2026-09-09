@@ -122,7 +122,7 @@ export async function deleteMessage(
 
 export interface SendVideoFileOptions {
   chatId: number | string;
-  video: ArrayBuffer | Uint8Array;
+  video: ArrayBuffer | Uint8Array<ArrayBuffer>;
   filename: string;
   caption?: string;
   parseMode?: ParseMode;
