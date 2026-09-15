@@ -28,17 +28,20 @@ LINE version of the X/Twitter video bot.
 `bots/stagewatch/`
 Scheduled Worker that watches artist and event news pages, deduplicates updates in KV, and pushes new items to Telegram.
 
+`bots/toho-ticket/`
+Scheduled Worker (every 5 min) that monitors TOHO Cinemas for ticket availability. Subscriptions at the theater+date+movie level, all state in a single KV key. Clock-driven polling before opening, status-driven after. Notifies on opening, 残席わずか, 満席, and 満席解放. Seat maps render as PNG with per-row available counts, refreshed in-place via `editMessageMedia`.
+
 `bots/daily-checkin/`
-Scheduled Worker that posts the daily work check-in to Slack (weekdays 10:00 JST): Outlook calendar via Graph API (rotating refresh token in KV, ICS publish URL as fallback) + Jira sprint tickets. When the tenant force-expires the token, the alert DM carries a permanent `/auth/start` link that re-seeds KV via Auth Code + PKCE.
+Scheduled Worker that posts the daily work check-in to Slack (weekdays 10:00 JST): Outlook calendar via Graph API + Jira sprint tickets.
 
 `services/herdbot/`
-Telegram agent bot that takes Slack / GitHub PR / Jira / Confluence links, shells out to the `ctxd` CLI for full-context fetches, and runs a Claude Agent SDK loop for multi-turn conversation. Replaces the `bots/ctxd` Cloudflare Worker (which couldn't run subprocesses and maintained a degraded reimplementation). Runs on the home Pi via Docker; long polling means no inbound port needed. Session state persists to disk with idle-timeout page-turning and one-tap resume.
+Telegram agent bot that takes Slack / GitHub PR / Jira / Confluence links, shells out to the `ctxd` CLI for full-context fetches, and runs a Claude Agent SDK loop for multi-turn conversation. Runs on the home Pi via Docker.
 
 `services/clawbot/`
 Long-running WeChat bridge service that connects ilink with the ctxd worker.
 
 `services/stake-odds/`
-Long-running Stake soccer odds watcher. Polls the popular tournament's fixture list every 10 minutes, watches the day's World Cup matches, and pushes a Telegram alert when any threeway odds line moves more than the configured threshold. Live matches are skipped; finished matches drop off the watchlist. Runs on the home Pi (same exit IP as the `cf_clearance` credential).
+Long-running Stake soccer odds watcher. Polls the fixture list every 10 minutes and pushes a Telegram alert when odds move beyond a threshold. Runs on the home Pi.
 
 `services/pokemon-stock/`
-Long-running Pokémon Center Online stock monitor. Polls product pages for purchasability (quantity select enabled + cart button not greyed) and pushes a Telegram alert when a target transitions from unavailable to available. Alerts if all targets fail to parse (cookie/session break, QueueIT block). Runs on the home Pi (same exit IP as the login cookie).
+Long-running Pokémon Center Online stock monitor. Polls product pages and pushes a Telegram alert when a target transitions to available. Runs on the home Pi.

@@ -161,3 +161,76 @@ export async function sendVideoFile(
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+
+export interface EditMessageMediaFileOptions {
+  chatId: number | string;
+  messageId: number;
+  photo: ArrayBuffer | Uint8Array;
+  filename: string;
+  caption?: string;
+  parseMode?: ParseMode;
+}
+
+// Edit an existing photo message in-place, replacing its media.
+// Uses multipart form-data so the new photo bytes can be uploaded.
+export async function editMessageMediaFile(
+  token: string,
+  opts: EditMessageMediaFileOptions,
+): Promise<void> {
+  const data = opts.photo instanceof Uint8Array ? opts.photo : new Uint8Array(opts.photo);
+  const form = new FormData();
+  form.append("chat_id", String(opts.chatId));
+  form.append("message_id", String(opts.messageId));
+  // media must be a JSON object referencing the attached file by name.
+  const media: Record<string, unknown> = { type: "photo", media: "attach://photo" };
+  if (opts.caption) media.caption = opts.caption;
+  if (opts.parseMode) media.parse_mode = opts.parseMode;
+  form.append("media", JSON.stringify(media));
+  form.append("photo", new Blob([data], { type: "image/png" }), opts.filename);
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/editMessageMedia`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`telegram editMessageMedia ${res.status}: ${detail.slice(0, 200)}`);
+  }
+}
+
+export interface SendPhotoFileOptions {
+  chatId: number | string;
+  photo: ArrayBuffer | Uint8Array;
+  filename: string;
+  caption?: string;
+  parseMode?: ParseMode;
+  replyToMessageId?: number;
+}
+
+export async function sendPhotoFile(
+  token: string,
+  opts: SendPhotoFileOptions,
+): Promise<number> {
+  const data = opts.photo instanceof Uint8Array ? opts.photo : new Uint8Array(opts.photo);
+  const form = new FormData();
+  form.append("chat_id", String(opts.chatId));
+  form.append("photo", new Blob([data], { type: "image/png" }), opts.filename);
+  if (opts.caption) form.append("caption", opts.caption);
+  if (opts.parseMode) form.append("parse_mode", opts.parseMode);
+  if (opts.replyToMessageId !== undefined)
+    form.append("reply_to_message_id", String(opts.replyToMessageId));
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`telegram sendPhoto ${res.status}: ${detail.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as SendMessageResponse;
+  if (!json.result?.message_id) throw new Error("telegram sendPhoto: no message_id");
+  return json.result.message_id;
+}
