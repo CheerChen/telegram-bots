@@ -165,7 +165,7 @@ export function escapeHtml(s: string): string {
 export interface EditMessageMediaFileOptions {
   chatId: number | string;
   messageId: number;
-  photo: ArrayBuffer | Uint8Array;
+  photo: ArrayBuffer | Uint8Array<ArrayBuffer>;
   filename: string;
   caption?: string;
   parseMode?: ParseMode;
@@ -201,7 +201,7 @@ export async function editMessageMediaFile(
 
 export interface SendPhotoFileOptions {
   chatId: number | string;
-  photo: ArrayBuffer | Uint8Array;
+  photo: ArrayBuffer | Uint8Array<ArrayBuffer>;
   filename: string;
   caption?: string;
   parseMode?: ParseMode;

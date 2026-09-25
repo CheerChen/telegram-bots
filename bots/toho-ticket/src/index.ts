@@ -730,7 +730,7 @@ function isPremium(kind: SeatKind): boolean {
   return kind === 5 || kind === 6;
 }
 
-export async function generateSeatPngAsync(layout: SeatLayout): Promise<Uint8Array> {
+export async function generateSeatPngAsync(layout: SeatLayout): Promise<Uint8Array<ArrayBuffer>> {
   if (!layout.height) return new Uint8Array(0);
 
   const cellSize = 24;
