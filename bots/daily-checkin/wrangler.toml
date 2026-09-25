@@ -9,12 +9,10 @@ enabled = true
 # JST weekdays. NB: CF cron weekdays are 1-7 with 1=Sunday (Quartz-style,
 # NOT the standard 0=Sunday). At late UTC hours the JST day has already
 # shifted forward, so DOW must be the UTC weekday of the day BEFORE.
-#   09:55 JST Mon-Fri = 00:55 UTC Mon-Fri  -> 2-6  (send)
-#   10:00 JST Mon-Fri = 01:00 UTC Mon-Fri  -> 2-6  (retry; alerts on failure)
-# The retry skips once the KV "sent today" key exists. Keep CRON_RETRY in
-# src/index.ts in sync. Two crons here puts the account at the Workers Free
-# limit of 5 cron triggers.
-crons = ["55 0 * * 2-6", "0 1 * * 2-6"]
+#   09:55 JST Mon-Fri = 00:55 UTC Mon-Fri  -> 2-6
+# The ~10:00 retry runs inside the same invocation (see src/index.ts); it is
+# not a second cron because the account is at the Workers Free limit of 5.
+crons = ["55 0 * * 2-6"]
 
 [[kv_namespaces]]
 binding = "CHECKIN_STATE"
@@ -38,7 +36,6 @@ MIN_MEETING_TITLE_LENGTH = "5"
 #
 # KV layout (CHECKIN_STATE):
 #   graph:refresh_token    current Entra refresh token (rotated on every use)
-#   checkin:today:<date>   { ts, digest } from the day's first successful send (TTL 4d);
-#                          doubles as the "already sent" lock; the 09:40 pass
-#                          chat.update's this message when the digest changed
+#   checkin:today:<date>   Slack message ts of the day's first successful send
+#                          (TTL 4d); doubles as the "already sent" lock
 #   pkce:<state>           code_verifier during an in-flight /auth flow (TTL 10 min)

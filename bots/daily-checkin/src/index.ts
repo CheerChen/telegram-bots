@@ -1,9 +1,10 @@
 // Daily check-in worker: Outlook calendar (Graph API, ICS fallback) + Jira
 // sprint tickets -> Slack DM.
 //
-// Schedule (JST weekdays, keep in sync with wrangler.toml + CRON_RETRY):
-//   09:55 send  — failure is only logged; the retry covers it
-//   10:00 retry — skips if already sent; failure alerts via Slack DM
+// Schedule: single cron at 09:55 JST weekdays (00:55 UTC Mon-Fri). A failed
+// send is only logged, then retried once in the same invocation after
+// RETRY_DELAY_MS (~10:00); only the retry's failure alerts via Slack DM.
+// One cron, not two: the account is at the Workers Free limit of 5 triggers.
 // Manual POST /run sends immediately and also writes the KV key, so cron skips.
 //
 // Ported from services/daily-checkin (Pi/Docker). MSAL is replaced with a raw
@@ -555,8 +556,12 @@ function isAuthorized(req: Request, url: URL, env: Env): boolean {
   );
 }
 
-// The 10:00 JST retry; the only cron whose failure alerts (see header).
-const CRON_RETRY = "0 1 * * 2-6";
+function errMsg(exc: unknown): string {
+  return exc instanceof Error ? exc.message : String(exc);
+}
+
+// Cron Triggers may run for up to 15 min wall-clock; sleeping costs no CPU.
+const RETRY_DELAY_MS = 5 * 60 * 1000;
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -585,22 +590,30 @@ export default {
     return new Response("not found", { status: 404 });
   },
 
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    const cron = controller.cron.trim();
-    const isRetry = cron === CRON_RETRY;
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     console.log(
-      `[cron] fired scheduledTime=${new Date(controller.scheduledTime).toISOString()} cron=${cron} job=${isRetry ? "retry" : "send"}`,
+      `[cron] fired scheduledTime=${new Date(controller.scheduledTime).toISOString()} cron=${controller.cron}`,
     );
-    ctx.waitUntil(
-      runCheckinSend(env).catch(async (exc) => {
-        const msg = exc instanceof Error ? exc.message : String(exc);
-        console.log(`[cron] ${isRetry ? "retry" : "send"} failed: ${msg}`);
-        // First attempt stays quiet; the retry is the last chance, so it fails loud.
-        if (!isRetry) return;
-        await postSlack(env, `:rotating_light: daily-checkin retry failed: ${msg}`).catch((e) =>
-          console.log(`[cron] failure alert also failed: ${e}`),
-        );
-      }),
-    );
+    // Awaited directly rather than via ctx.waitUntil, whose post-response grace
+    // is only 30s; the scheduled handler itself may run the full retry delay.
+    try {
+      await runCheckinSend(env);
+      return;
+    } catch (exc) {
+      console.log(`[cron] send failed, retrying in ${RETRY_DELAY_MS / 1000}s: ${errMsg(exc)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    try {
+      // runCheckinSend re-checks the KV lock, so a send that actually landed
+      // before the first attempt threw is not duplicated.
+      await runCheckinSend(env);
+    } catch (exc) {
+      // Fail loud: the retry was the last chance today.
+      const msg = errMsg(exc);
+      console.log(`[cron] retry failed: ${msg}`);
+      await postSlack(env, `:rotating_light: daily-checkin retry failed: ${msg}`).catch((e) =>
+        console.log(`[cron] failure alert also failed: ${e}`),
+      );
+    }
   },
 };
