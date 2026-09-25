@@ -1,9 +1,9 @@
 // Daily check-in worker: Outlook calendar (Graph API, ICS fallback) + Jira
 // sprint tickets -> Slack DM.
 //
-// Schedule: single cron at 07:55 JST weekdays (22:55 UTC Sun-Thu).
-// Previously had 3 crons (07:55 send, 09:40 update, 10:00 retry) but merged
-// to 1 to free up Workers Free cron trigger quota. Send is idempotent via KV.
+// Schedule (JST weekdays, keep in sync with wrangler.toml + CRON_RETRY):
+//   09:55 send  — failure is only logged; the retry covers it
+//   10:00 retry — skips if already sent; failure alerts via Slack DM
 // Manual POST /run sends immediately and also writes the KV key, so cron skips.
 //
 // Ported from services/daily-checkin (Pi/Docker). MSAL is replaced with a raw
@@ -408,7 +408,7 @@ function composeCheckin(env: Env, events: CalEvent[], issues: JiraIssue[]): { te
 // Check-in run
 // ---------------------------------------------------------------------------
 const KV_DAILY_KEY = "checkin:today:";
-const KV_DAILY_TTL = 4 * 86400; // cover send + fallback + edit window (and weekends)
+const KV_DAILY_TTL = 4 * 86400; // outlive the day (and weekends) so cron and /run see the lock
 
 /** Graph calendar with the existing ICS + re-auth alert fallback. */
 async function fetchEvents(env: Env, dayStart: Date, dayEnd: Date, alertFallback: boolean): Promise<CalEvent[]> {
@@ -445,10 +445,11 @@ async function fetchAndCompose(env: Env, alertFallback: boolean): Promise<{ text
 }
 
 /**
- * First send of the day: post, then record KV { ts, digest }.
- * The KV key doubles as the "already sent today" lock — later triggers (retry
- * cron, manual /run) skip once it exists, so at most one message/day except in
- * the tiny window of a crash between postMessage and the KV write.
+ * First send of the day: post, then record the message ts in KV.
+ * The KV key doubles as the "already sent today" lock — a later trigger (cron
+ * after a manual /run, or vice versa) skips once it exists, so at most one
+ * message/day except in the tiny window of a crash between postMessage and
+ * the KV write.
  */
 async function runCheckinSend(env: Env): Promise<string> {
   const { todayStr } = jstWindow(new Date());
@@ -459,34 +460,8 @@ async function runCheckinSend(env: Env): Promise<string> {
   }
   const { text, blocks } = await fetchAndCompose(env, true);
   const ts = await postSlack(env, text, blocks);
-  await env.CHECKIN_STATE.put(key, JSON.stringify({ ts, digest: text }), { expirationTtl: KV_DAILY_TTL });
+  await env.CHECKIN_STATE.put(key, ts ?? "sent", { expirationTtl: KV_DAILY_TTL });
   console.log(`[send] ${todayStr} sent ts=${ts}`);
-  return text;
-}
-
-/**
- * In-place completion: re-fetch and chat.update the sent message when the
- * composed digest changed (late MTG/tickets). No-op when nothing changed or
- * when no message was sent yet today.
- */
-async function runCheckinUpdate(env: Env): Promise<string> {
-  const { todayStr } = jstWindow(new Date());
-  const key = `${KV_DAILY_KEY}${todayStr}`;
-  const raw = await env.CHECKIN_STATE.get(key);
-  if (!raw) {
-    console.log(`[update] ${todayStr} not sent yet; skip`);
-    return `${todayStr}: no message yet; skip update`;
-  }
-  const stored = JSON.parse(raw) as { ts: string; digest: string };
-  const { text, blocks } = await fetchAndCompose(env, false);
-  if (text === stored.digest) {
-    console.log(`[update] ${todayStr} no digest change; skip`);
-    return `${todayStr}: no change; skip update`;
-  }
-  const channel = await resolveChannel(env);
-  await slackApi(env, "chat.update", { channel, ts: stored.ts, text, blocks });
-  await env.CHECKIN_STATE.put(key, JSON.stringify({ ts: stored.ts, digest: text }), { expirationTtl: KV_DAILY_TTL });
-  console.log(`[update] ${todayStr} updated ts=${stored.ts}`);
   return text;
 }
 
@@ -580,9 +555,9 @@ function isAuthorized(req: Request, url: URL, env: Env): boolean {
   );
 }
 
-// Cron: single trigger at 07:55 JST (22:55 UTC Sun-Thu). Merged from 3 crons
-// to free up Workers Free cron trigger quota. The 09:40 in-place update and
-// 10:00 retry passes were dropped; the send is idempotent via KV "sent today".
+// The 10:00 JST retry; the only cron whose failure alerts (see header).
+const CRON_RETRY = "0 1 * * 2-6";
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -611,15 +586,18 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const cron = controller.cron.trim();
+    const isRetry = cron === CRON_RETRY;
     console.log(
-      `[cron] fired scheduledTime=${new Date(controller.scheduledTime).toISOString()} cron=${controller.cron}`,
+      `[cron] fired scheduledTime=${new Date(controller.scheduledTime).toISOString()} cron=${cron} job=${isRetry ? "retry" : "send"}`,
     );
     ctx.waitUntil(
       runCheckinSend(env).catch(async (exc) => {
-        // Fail loud: any crash (Jira down, ICS broken, Slack error) lands in the DM.
         const msg = exc instanceof Error ? exc.message : String(exc);
-        console.log(`[cron] run failed: ${msg}`);
-        await postSlack(env, `:rotating_light: daily-checkin run failed: ${msg}`).catch((e) =>
+        console.log(`[cron] ${isRetry ? "retry" : "send"} failed: ${msg}`);
+        // First attempt stays quiet; the retry is the last chance, so it fails loud.
+        if (!isRetry) return;
+        await postSlack(env, `:rotating_light: daily-checkin retry failed: ${msg}`).catch((e) =>
           console.log(`[cron] failure alert also failed: ${e}`),
         );
       }),

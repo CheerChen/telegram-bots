@@ -32,7 +32,7 @@ Scheduled Worker that watches artist and event news pages, deduplicates updates 
 Scheduled Worker (every 5 min) that monitors TOHO Cinemas for ticket availability. Subscriptions at the theater+date+movie level, all state in a single KV key. Clock-driven polling before opening, status-driven after. Notifies on opening, 残席わずか, 満席, and 満席解放. Seat maps render as PNG with per-row available counts, refreshed in-place via `editMessageMedia`.
 
 `bots/daily-checkin/`
-Scheduled Worker that posts the daily work check-in to Slack (weekdays 10:00 JST): Outlook calendar via Graph API + Jira sprint tickets.
+Scheduled Worker that posts the daily work check-in to Slack (weekdays 09:55 JST, retry at 10:00 that alerts on failure): Outlook calendar via Graph API + Jira sprint tickets.
 
 `bots/gmail-lifecycle/`
 Scheduled Worker (daily, D1-backed) that manages domain-based Gmail labels: promotes busy domains, archives stale ones, wakes them on new mail, and eventually deletes them.
