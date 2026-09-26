@@ -15,14 +15,11 @@ import type { CallbackQuery, TelegramUpdate } from "shared/types";
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
-  TELEGRAM_CHAT_ID?: string;
-  TOHO_ADMIN_SECRET?: string;
   TOHO_STATE: KVNamespace;
 }
 
 // --- Constants ---
 
-const CRON = "*/5 * * * *";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -34,10 +31,6 @@ const THEATER_FIND_URL = "https://www.tohotheater.jp/theater/find.html";
 
 const THEATER_CACHE_KEY = "meta:theaters";
 const THEATER_CACHE_TTL = 60 * 60 * 24 * 7; // 7 days
-const WATCHES_KEY = "watches";
-
-const MAX_WATCHES_PER_USER = 10;
-const MAX_TOTAL_WATCHES = 50;
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -47,14 +40,6 @@ const STATUS_LABEL: Record<string, string> = {
   D: "満席 [×]",
   G: "販売期間外",
 };
-
-// Opening window: poll within [showDay - 3 days, showDay + 1 day] (JST).
-// Outside this window the cron skips the watch entirely (clock-based, no KV).
-const OPENING_WINDOW_BEFORE_DAYS = 3;
-const OPENING_WINDOW_AFTER_DAYS = 1;
-// TOHO typically opens ~2 days before the screening date at 00:00 JST.
-const OPENING_OFFSET_DAYS = 2;
-const EXPIRY_HOURS_AFTER_SHOW = 2;
 
 // --- Types ---
 
@@ -99,42 +84,7 @@ interface SeatLayout {
   height: number;
 }
 
-interface ShowtimeState {
-  pfNo: string;
-  showingStart: string;
-  showingEnd: string;
-  screenCode: string;
-  screenName: string;
-  allSeatNum: number;
-  lastStatus: string;
-  lastSeatAvailable?: number;
-  lastSeatSold?: number;
-}
-
-// A watch covers one movie at one theater on one date — all showtimes.
-// Stored as a single JSON array under WATCHES_KEY.
-interface Watch {
-  chatId: number;
-  messageId: number; // monitor message (text, edited on status change)
-  theater: string;
-  theaterName: string;
-  showDay: string;
-  movieCode: string;
-  movieTitle: string;
-  showtimes: ShowtimeState[];
-  seatmapMsg: Record<string, number>; // pfNo → seatmap photo message id
-  createdAt: string;
-}
-
 // --- Utilities ---
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function nowMs(): number {
-  return Date.now();
-}
 
 function nowUnixSeconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -145,98 +95,18 @@ function nowYYMMDD(): string {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// "HH:MM" in JST, shown on refreshable messages so a stale view is obvious.
+function jstClock(): string {
+  const d = new Date(Date.now() + 9 * 3600_000);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+
 function fmtDate(showDay: string): string {
   const m = parseInt(showDay.slice(4, 6), 10);
   const d = parseInt(showDay.slice(6, 8), 10);
   const date = new Date(parseInt(showDay.slice(0, 4), 10), m - 1, d);
   const w = WEEKDAYS[date.getDay()];
   return `${m}/${d}(${w})`;
-}
-
-// Convert showDay + JST time to UTC epoch ms.
-// showingEnd may fall on the next calendar day if earlier than showingStart.
-function showTimeMs(showDay: string, time: string, showingStart?: string): number {
-  const [hRaw, mRaw] = time.split(":").map((n) => parseInt(n ?? "0", 10));
-  const h = hRaw ?? 0;
-  const m = mRaw ?? 0;
-  const y = parseInt(showDay.slice(0, 4), 10);
-  const mo = parseInt(showDay.slice(4, 6), 10) - 1;
-  const d = parseInt(showDay.slice(6, 8), 10);
-  let ms = Date.UTC(y, mo, d, h - 9, m, 0); // JST = UTC+9
-  if (showingStart !== undefined) {
-    const [shRaw, smRaw] = showingStart.split(":").map((n) => parseInt(n ?? "0", 10));
-    const sh = shRaw ?? 0;
-    const sm = smRaw ?? 0;
-    if (h < sh || (h === sh && m < sm)) ms += 86400_000; // ends next day
-  }
-  return ms;
-}
-
-// Timestamp of 00:00 JST on the given showDay.
-function jstMidnight(showDay: string): number {
-  return showTimeMs(showDay, "00:00");
-}
-
-// --- Opening window / scheduling (pure functions, no KV) ---
-
-function inOpeningWindow(showDay: string, now: number): boolean {
-  const midnight = jstMidnight(showDay);
-  const start = midnight - OPENING_WINDOW_BEFORE_DAYS * 86400_000;
-  const end = midnight + OPENING_WINDOW_AFTER_DAYS * 86400_000;
-  return now >= start && now < end;
-}
-
-// Whether the expected opening moment (showDay - OPENING_OFFSET_DAYS, 00:00 JST)
-// is within ±1 hour of now. Used for pre-opening dense polling.
-function isNearOpening(showDay: string, now: number): boolean {
-  const opening = jstMidnight(showDay) - OPENING_OFFSET_DAYS * 86400_000;
-  return Math.abs(now - opening) < 3600_000;
-}
-
-// Decide whether a group should be polled this cron tick (every 5 min).
-// Pure function: inputs are current time, nearest showtime, and on-sale status.
-//
-// Pre-opening (all G):
-//   ±1h of expected opening → every tick (5 min)
-//   otherwise              → every 15 min (every 3rd tick)
-// Post-opening (any non-G), by distance to nearest showingStart:
-//   > 24h → 30 min (every 6th tick)
-//   3–24h → 10 min (every 2nd tick)
-//   < 3h  → 5 min  (every tick)
-function shouldPollGroup(groupWatches: Watch[], now: number): boolean {
-  const tick = Math.floor(now / (5 * 60_000));
-  const onSale = groupWatches.some((w) => isOnSale(w.showtimes));
-
-  if (!onSale) {
-    // Pre-opening: dense near expected opening, sparse otherwise
-    if (groupWatches.some((w) => isNearOpening(w.showDay, now))) return true;
-    return tick % 3 === 0; // every 15 min
-  }
-
-  // Post-opening: nearest showingStart across all watches in the group
-  let nearest = Infinity;
-  for (const w of groupWatches) {
-    for (const st of w.showtimes) {
-      const start = showTimeMs(w.showDay, st.showingStart);
-      if (start < nearest) nearest = start;
-    }
-  }
-  const distance = nearest - now;
-  if (distance > 24 * 3600_000) return tick % 6 === 0; // 30 min
-  if (distance > 3 * 3600_000) return tick % 2 === 0; // 10 min
-  return true; // < 3h: every tick
-}
-
-// A watch is expired when every showtime has ended > EXPIRY_HOURS ago.
-function isExpired(watch: Watch, now: number): boolean {
-  return watch.showtimes.every(
-    (st) => showTimeMs(watch.showDay, st.showingEnd, st.showingStart) + EXPIRY_HOURS_AFTER_SHOW * 3600_000 < now,
-  );
-}
-
-// Whether the watch is already on sale: any showtime with status ≠ G.
-function isOnSale(showtimes: ShowtimeState[]): boolean {
-  return showtimes.some((st) => st.lastStatus !== "G");
 }
 
 // --- Theater list ---
@@ -882,61 +752,6 @@ function buildSeatmapCaption(layout: SeatLayout, movieTitle: string, showDay: st
   return `<pre>${escapeHtml(grid)}</pre>\n\n${escapeHtml(header)}\n${escapeHtml(summary)}`;
 }
 
-// --- KV helpers (single blob) ---
-
-async function loadWatches(kv: KVNamespace): Promise<Watch[]> {
-  const raw = await kv.get(WATCHES_KEY);
-  if (!raw) return [];
-  try {
-    const arr = JSON.parse(raw) as Watch[];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
-async function saveWatches(kv: KVNamespace, watches: Watch[]): Promise<void> {
-  await kv.put(WATCHES_KEY, JSON.stringify(watches));
-}
-
-function findWatch(watches: Watch[], chatId: number, theater: string, showDay: string, movieCode: string): Watch | undefined {
-  return watches.find(
-    (w) => w.chatId === chatId && w.theater === theater && w.showDay === showDay && w.movieCode === movieCode,
-  );
-}
-
-function countUserWatches(watches: Watch[], chatId: number): number {
-  return watches.filter((w) => w.chatId === chatId).length;
-}
-
-// --- Watch message rendering ---
-
-function renderWatchText(watch: Watch): string {
-  const lines: string[] = [`🎬 ${watch.movieTitle}`, `${fmtDate(watch.showDay)} ${watch.theaterName}`, ""];
-  for (const st of watch.showtimes) {
-    const label = STATUS_LABEL[st.lastStatus] ?? st.lastStatus;
-    let seatLine = "";
-    if (st.lastSeatAvailable !== undefined && st.lastSeatSold !== undefined) {
-      seatLine = `  空席 ${st.lastSeatAvailable}/${st.lastSeatAvailable + st.lastSeatSold}`;
-    }
-    lines.push(`${st.showingStart}～${st.showingEnd} ${st.screenName} (${st.allSeatNum}席) ${label}${seatLine}`);
-  }
-  lines.push("", `更新时间：${nowIso()}`);
-  return lines.join("\n");
-}
-
-function watchKeyboard(watch: Watch): InlineKeyboardMarkup {
-  const rows: InlineKeyboardButton[][] = [];
-  // One seatmap button per showtime
-  const seatmapButtons = watch.showtimes.map((st) => ({
-    text: `🗺 ${st.showingStart}`,
-    callback_data: `seatmap:${watch.theater}:${watch.showDay}:${watch.movieCode}:${st.pfNo}`,
-  }));
-  rows.push(...chunk(seatmapButtons, 3));
-  rows.push([{ text: "🗑 取消订阅", callback_data: `u:${watch.theater}:${watch.showDay}:${watch.movieCode}` }]);
-  return { inline_keyboard: rows };
-}
-
 function kb(rows: InlineKeyboardButton[][]): InlineKeyboardMarkup {
   return { inline_keyboard: rows };
 }
@@ -963,11 +778,10 @@ async function handleUpdate(update: TelegramUpdate, env: Env): Promise<Response>
     await sendMessage(env.TELEGRAM_BOT_TOKEN, {
       chatId,
       text:
-        "🎬 TOHOシネマズ 开票预警\n\n" +
+        "🎬 TOHOシネマズ 场次 / 座位查询\n\n" +
         "Commands:\n" +
-        "• /toho — 浏览影院 → 日期 → 影片 → 订阅\n" +
-        "• /list — 查看你的订阅\n\n" +
-        "订阅以「影院+日期+影片」为单位，覆盖当天所有场次。\n开票时通知你（含精确空席数），満席也通知。",
+        "• /toho — 浏览影院 → 日期 → 影片 → 场次状态\n\n" +
+        "场次页可查看每场的座位图；座位图和场次页都能 🔄 原地刷新。",
       disableWebPagePreview: true,
     });
     return new Response("ok");
@@ -978,14 +792,9 @@ async function handleUpdate(update: TelegramUpdate, env: Env): Promise<Response>
     return new Response("ok");
   }
 
-  if (text === "/list") {
-    await sendWatchList(env, chatId);
-    return new Response("ok");
-  }
-
   await sendMessage(env.TELEGRAM_BOT_TOKEN, {
     chatId,
-    text: "发送 /toho 开始浏览，或 /list 查看订阅。",
+    text: "发送 /toho 开始浏览。",
     disableWebPagePreview: true,
   });
   return new Response("ok");
@@ -1077,7 +886,7 @@ async function sendMovieMenu(env: Env, chatId: number, messageId: number, theate
   });
 }
 
-// Show all showtimes for a movie + a single subscribe button (covers all showtimes).
+// Show all showtimes for a movie with live status, one seatmap button each.
 async function sendShowtimeMenu(env: Env, chatId: number, messageId: number, theaterCode: string, showDay: string, movieCode: string): Promise<void> {
   let shows: TohoShow[];
   try {
@@ -1097,9 +906,18 @@ async function sendShowtimeMenu(env: Env, chatId: number, messageId: number, the
     const label = STATUS_LABEL[s.status] ?? s.status;
     lines.push(`${s.showingStart}～${s.showingEnd} ${s.screenName} (${s.allSeatNum}席) ${label}`);
   }
+  lines.push("", `更新于 ${jstClock()}`);
+  const seatmapButtons = movieShows.map((s) => ({
+    text: `🗺 ${s.showingStart}`,
+    callback_data: `seatmap:${theaterCode}:${showDay}:${movieCode}:${s.pfNo}`,
+  }));
   const rows: InlineKeyboardButton[][] = [
-    [{ text: "🔔 订阅（全部场次）", callback_data: `s:${theaterCode}:${showDay}:${movieCode}` }],
-    [{ text: "← 返回影片", callback_data: `bm:${theaterCode}:${showDay}:${movieCode}` }],
+    ...chunk(seatmapButtons, 3),
+    [
+      // Same payload as picking the movie: re-renders this menu with fresh status.
+      { text: "🔄 刷新", callback_data: `m:${theaterCode}:${showDay}:${movieCode}` },
+      { text: "← 返回影片", callback_data: `bm:${theaterCode}:${showDay}:${movieCode}` },
+    ],
   ];
   await editMessageText(env.TELEGRAM_BOT_TOKEN, {
     chatId,
@@ -1110,173 +928,12 @@ async function sendShowtimeMenu(env: Env, chatId: number, messageId: number, the
   });
 }
 
-// Subscribe to all showtimes of a movie at a theater on a date.
-async function subscribeWatch(env: Env, chatId: number, messageId: number, theaterCode: string, showDay: string, movieCode: string): Promise<void> {
-  const watches = await loadWatches(env.TOHO_STATE);
+// --- Seatmap handler ---
 
-  // Check limits
-  if (countUserWatches(watches, chatId) >= MAX_WATCHES_PER_USER) {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-      chatId, messageId,
-      text: `⚠️ 你的订阅已达上限 (${MAX_WATCHES_PER_USER})，请先取消部分订阅。发送 /list 管理。`,
-      disableWebPagePreview: true,
-    });
-    return;
-  }
-  if (watches.length >= MAX_TOTAL_WATCHES) {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-      chatId, messageId, text: "⚠️ 系统订阅总数已达上限，请稍后再试。", disableWebPagePreview: true,
-    });
-    return;
-  }
-  if (findWatch(watches, chatId, theaterCode, showDay, movieCode)) {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-      chatId, messageId, text: "已经订阅过这部影片了", disableWebPagePreview: true,
-    });
-    return;
-  }
-
-  let shows: TohoShow[];
-  try {
-    shows = await fetchSchedule(theaterCode, showDay);
-  } catch {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, { chatId, messageId, text: "获取场次失败", disableWebPagePreview: true });
-    return;
-  }
-  const movieShows = shows.filter((s) => s.movieCode === movieCode);
-  if (!movieShows.length) {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, { chatId, messageId, text: "没有匹配场次", disableWebPagePreview: true });
-    return;
-  }
-
-  const regions = await getTheaterList(env);
-  const theaterName = findTheater(regions, theaterCode)?.name ?? theaterCode;
-  const title = movieShows[0]!.movieTitle;
-
-  // Build showtime states. Fetch seat count for showtimes already on sale.
-  const showtimes: ShowtimeState[] = [];
-  for (const show of movieShows) {
-    let seatAvailable: number | undefined;
-    let seatSold: number | undefined;
-    if (show.status !== "G") {
-      try {
-        const html = await fetchSeatPage(show, theaterCode, showDay);
-        const count = parseSeatCount(html);
-        seatAvailable = count.available;
-        seatSold = count.sold;
-      } catch {
-        // Non-fatal — seed without seat count
-      }
-    }
-    showtimes.push({
-      pfNo: show.pfNo,
-      showingStart: show.showingStart,
-      showingEnd: show.showingEnd,
-      screenCode: show.screenCode,
-      screenName: show.screenName,
-      allSeatNum: show.allSeatNum,
-      lastStatus: show.status,
-      lastSeatAvailable: seatAvailable,
-      lastSeatSold: seatSold,
-    });
-  }
-
-  // Send seed message (new message, not edit of the browsing message)
-  const watch: Watch = {
-    chatId,
-    messageId: 0, // filled after sendMessage
-    theater: theaterCode,
-    theaterName,
-    showDay,
-    movieCode,
-    movieTitle: title,
-    showtimes,
-    seatmapMsg: {},
-    createdAt: nowIso(),
-  };
-  const seedText = renderWatchText(watch);
-  const seedMsgId = await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-    chatId,
-    text: seedText,
-    disableWebPagePreview: true,
-    replyMarkup: watchKeyboard(watch),
-  });
-  watch.messageId = seedMsgId;
-
-  watches.push(watch);
-  await saveWatches(env.TOHO_STATE, watches);
-  console.log(`[subscribe] chatId=${chatId} theater=${theaterCode} day=${showDay} movie=${movieCode} showtimes=${showtimes.length} msgId=${seedMsgId}`);
-
-  await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-    chatId, messageId,
-    text: `✅ 已订阅 → 见下方消息（持续更新）`,
-    disableWebPagePreview: true,
-  });
-}
-
-async function sendWatchList(env: Env, chatId: number): Promise<void> {
-  const watches = await loadWatches(env.TOHO_STATE);
-  const userWatches = watches.filter((w) => w.chatId === chatId);
-  if (!userWatches.length) {
-    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-      chatId,
-      text: "📋 你没有活跃订阅\n\n发送 /toho 开始浏览。",
-      disableWebPagePreview: true,
-    });
-    return;
-  }
-  const lines: string[] = [`📋 你的订阅 (${userWatches.length})\n`];
-  const buttons: InlineKeyboardButton[] = [];
-  for (const w of userWatches) {
-    const onSale = isOnSale(w.showtimes);
-    const statusIcon = onSale ? "🟢" : "⏳";
-    lines.push(`${statusIcon} ${w.movieTitle}\n  ${fmtDate(w.showDay)} ${w.theaterName} (${w.showtimes.length}场次)`);
-    buttons.push({ text: `❌ ${w.movieTitle} ${fmtDate(w.showDay)}`, callback_data: `u:${w.theater}:${w.showDay}:${w.movieCode}` });
-  }
-  const rows = chunk(buttons, 1);
-  rows.push([{ text: "🗑 全部取消", callback_data: `ua:${chatId}` }]);
-  await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-    chatId,
-    text: lines.join("\n"),
-    replyMarkup: kb(rows),
-    disableWebPagePreview: true,
-  });
-}
-
-async function unsubscribeWatch(env: Env, chatId: number, messageId: number, theaterCode: string, showDay: string, movieCode: string): Promise<void> {
-  const watches = await loadWatches(env.TOHO_STATE);
-  const idx = watches.findIndex((w) => w.chatId === chatId && w.theater === theaterCode && w.showDay === showDay && w.movieCode === movieCode);
-  if (idx < 0) {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, { chatId, messageId, text: "订阅不存在", disableWebPagePreview: true });
-    return;
-  }
-  const removed = watches.splice(idx, 1)[0]!;
-  await saveWatches(env.TOHO_STATE, watches);
-  await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-    chatId, messageId,
-    text: `❌ 已取消\n${removed.movieTitle}\n${fmtDate(showDay)} ${removed.theaterName}`,
-    disableWebPagePreview: true,
-  });
-}
-
-async function unsubscribeAll(env: Env, chatId: number, messageId: number): Promise<void> {
-  const watches = await loadWatches(env.TOHO_STATE);
-  const remaining = watches.filter((w) => w.chatId !== chatId);
-  const removedCount = watches.length - remaining.length;
-  if (removedCount === 0) {
-    await editMessageText(env.TELEGRAM_BOT_TOKEN, { chatId, messageId, text: "没有订阅可取消", disableWebPagePreview: true });
-    return;
-  }
-  await saveWatches(env.TOHO_STATE, remaining);
-  await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-    chatId, messageId,
-    text: `🗑 已取消全部订阅 (${removedCount} 部影片)`,
-    disableWebPagePreview: true,
-  });
-}
-
-// --- Seatmap handler (editMessageMedia refresh) ---
-
+// Render a seat map for one showtime. With refreshMessageId, the photo message
+// carrying the pressed 🔄 button is edited in place; otherwise a new photo is
+// sent. The refresh button targets the callback's own message, so no state is
+// stored anywhere.
 async function handleSeatmap(
   env: Env,
   chatId: number,
@@ -1285,10 +942,10 @@ async function handleSeatmap(
   showDay: string,
   movieCode: string,
   pfNo: string,
+  refreshMessageId?: number,
 ): Promise<void> {
-  await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQueryId, "生成中…");
+  await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQueryId, refreshMessageId ? "刷新中…" : "生成中…");
 
-  // Fetch schedule to get show details
   let shows: TohoShow[];
   try {
     shows = await fetchSchedule(theaterCode, showDay);
@@ -1302,7 +959,6 @@ async function handleSeatmap(
     return;
   }
 
-  // Fetch seat page
   let html: string;
   try {
     html = await fetchSeatPage(show, theaterCode, showDay);
@@ -1318,45 +974,37 @@ async function handleSeatmap(
   }
 
   const png = await generateSeatPngAsync(layout);
-  const caption = buildSeatmapCaption(layout, show.movieTitle, showDay, show);
+  const caption = `${buildSeatmapCaption(layout, show.movieTitle, showDay, show)}\n${escapeHtml(`更新于 ${jstClock()}`)}`;
+  const replyMarkup = kb([
+    [{ text: "🔄 刷新座位图", callback_data: `sr:${theaterCode}:${showDay}:${movieCode}:${pfNo}` }],
+  ]);
 
-  // Check if we have a stored seatmap message to refresh via editMessageMedia
-  const watches = await loadWatches(env.TOHO_STATE);
-  const watch = findWatch(watches, chatId, theaterCode, showDay, movieCode);
-  const existingMsgId = watch?.seatmapMsg?.[pfNo];
-
-  if (existingMsgId) {
-    // Refresh existing photo in-place
+  if (refreshMessageId) {
     try {
       await editMessageMediaFile(env.TELEGRAM_BOT_TOKEN, {
         chatId,
-        messageId: existingMsgId,
+        messageId: refreshMessageId,
         photo: png,
         filename: "seatmap.png",
         caption,
         parseMode: "HTML",
+        replyMarkup,
       });
       return;
     } catch (error) {
-      // Message may have been deleted — fall through to send a new one
-      console.log(`[seatmap] editMessageMedia failed (msg ${existingMsgId}): ${error instanceof Error ? error.message : String(error)}`);
+      // Message may be too old or deleted — fall through to send a new one
+      console.log(`[seatmap] editMessageMedia failed (msg ${refreshMessageId}): ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  // Send a new photo
-  const newMsgId = await sendPhotoFile(env.TELEGRAM_BOT_TOKEN, {
+  await sendPhotoFile(env.TELEGRAM_BOT_TOKEN, {
     chatId,
     photo: png,
     filename: "seatmap.png",
     caption,
     parseMode: "HTML",
+    replyMarkup,
   });
-
-  // Store the message id for future refresh (only if a watch exists)
-  if (watch) {
-    watch.seatmapMsg[pfNo] = newMsgId;
-    await saveWatches(env.TOHO_STATE, watches);
-  }
 }
 
 // --- Callback router ---
@@ -1429,29 +1077,6 @@ async function handleCallback(cb: CallbackQuery, env: Env): Promise<void> {
     return;
   }
 
-  // s:<theater>:<day>:<movieCode> — subscribe (all showtimes)
-  if (data.startsWith("s:")) {
-    const parts = data.slice(2).split(":");
-    await answer("订阅中…");
-    if (parts.length >= 3) await subscribeWatch(env, chatId, messageId, parts[0]!, parts[1]!, parts[2]!);
-    return;
-  }
-
-  // u:<theater>:<day>:<movieCode> — unsubscribe
-  if (data.startsWith("u:")) {
-    const rest = data.slice(2);
-    if (rest.startsWith("a:")) {
-      const targetChatId = parseInt(rest.slice(2), 10);
-      await answer();
-      if (targetChatId === chatId) await unsubscribeAll(env, chatId, messageId);
-      return;
-    }
-    const parts = rest.split(":");
-    await answer();
-    if (parts.length >= 3) await unsubscribeWatch(env, chatId, messageId, parts[0]!, parts[1]!, parts[2]!);
-    return;
-  }
-
   // seatmap:<theater>:<day>:<movieCode>:<pfNo> — seat map
   if (data.startsWith("seatmap:")) {
     const parts = data.slice(8).split(":");
@@ -1463,235 +1088,28 @@ async function handleCallback(cb: CallbackQuery, env: Env): Promise<void> {
     return;
   }
 
+  // sr:<theater>:<day>:<movieCode>:<pfNo> — refresh the pressed seat map in place
+  if (data.startsWith("sr:")) {
+    const parts = data.slice(3).split(":");
+    if (parts.length >= 4) {
+      await handleSeatmap(env, chatId, cb.id, parts[0]!, parts[1]!, parts[2]!, parts[3]!, messageId);
+    } else {
+      await answer();
+    }
+    return;
+  }
+
   await answer();
 }
 
-// --- Cron monitor (hybrid: clock-based opening window + write-on-change) ---
-
-async function runMonitor(env: Env): Promise<void> {
-  const watches = await loadWatches(env.TOHO_STATE);
-  console.log(`[monitor] watches=${watches.length}`);
-  if (!watches.length) return;
-
-  const now = nowMs();
-
-  // Phase 1: clean up expired watches (all showtimes ended > 2h ago)
-  const expiredIdx: number[] = [];
-  for (let i = 0; i < watches.length; i++) {
-    if (isExpired(watches[i]!, now)) expiredIdx.push(i);
-  }
-  let changed = false;
-  if (expiredIdx.length) {
-    // Edit expired watch messages to final state before removing
-    for (const i of expiredIdx) {
-      const w = watches[i]!;
-      try {
-        await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-          chatId: w.chatId,
-          messageId: w.messageId,
-          text: `🎬 ${w.movieTitle}\n${fmtDate(w.showDay)} ${w.theaterName}\n\n放映结束，已自动取消订阅。`,
-          disableWebPagePreview: true,
-        });
-      } catch {
-        // Non-fatal
-      }
-    }
-    for (let i = expiredIdx.length - 1; i >= 0; i--) watches.splice(expiredIdx[i]!, 1);
-    changed = true;
-  }
-
-  // Phase 2: filter watches within opening window (clock-based, no KV)
-  const active = watches.filter((w) => inOpeningWindow(w.showDay, now));
-  console.log(`[monitor] active=${active.length} expired=${expiredIdx.length}`);
-  if (!active.length) {
-    if (changed) await saveWatches(env.TOHO_STATE, watches);
-    return;
-  }
-
-  // Phase 3: group by theater:showDay — one schedule API call per group
-  const groups = new Map<string, Watch[]>();
-  for (const w of active) {
-    const gk = `${w.theater}:${w.showDay}`;
-    const arr = groups.get(gk) ?? [];
-    arr.push(w);
-    groups.set(gk, arr);
-  }
-
-  for (const [groupKey, groupWatches] of groups) {
-    // Check if this group should be polled this tick (pure function, no KV)
-    if (!shouldPollGroup(groupWatches, now)) {
-      console.log(`[monitor] group=${groupKey} skipped (not due this tick)`);
-      continue;
-    }
-    const [theater, showDay] = groupKey.split(":");
-    console.log(`[monitor] group=${groupKey} watches=${groupWatches.length}`);
-    let shows: TohoShow[];
-    try {
-      shows = await fetchSchedule(theater!, showDay!);
-    } catch (error) {
-      console.error(`[monitor] schedule fetch failed for ${groupKey}: ${error}`);
-      continue;
-    }
-
-    for (const watch of groupWatches) {
-      let watchChanged = false;
-      const newShowtimes: ShowtimeState[] = [];
-
-      for (const st of watch.showtimes) {
-        const show = shows.find((s) => s.movieCode === watch.movieCode && s.pfNo === st.pfNo);
-        if (!show) {
-          // Showtime no longer in schedule — keep it as-is; cleanup happens via isExpired
-          newShowtimes.push(st);
-          continue;
-        }
-
-        if (show.status !== st.lastStatus) {
-          const prevStatus = st.lastStatus;
-          console.log(`[monitor] ${watch.movieTitle} ${st.pfNo}: ${prevStatus} -> ${show.status}`);
-          // Fetch seat count only on status change
-          let seatAvailable = st.lastSeatAvailable;
-          let seatSold = st.lastSeatSold;
-          try {
-            const html = await fetchSeatPage(show, watch.theater, watch.showDay);
-            const count = parseSeatCount(html);
-            seatAvailable = count.available;
-            seatSold = count.sold;
-          } catch {
-            // Non-fatal — keep previous values
-          }
-          st.lastStatus = show.status;
-          st.lastSeatAvailable = seatAvailable;
-          st.lastSeatSold = seatSold;
-          watchChanged = true;
-
-          // Notify on significant transitions
-          await notifyStatusChange(env, watch, st, show, prevStatus);
-        }
-        newShowtimes.push(st);
-      }
-
-      // Detect new showtimes that appeared in schedule but not in watch
-      for (const show of shows) {
-        if (show.movieCode !== watch.movieCode) continue;
-        if (newShowtimes.some((st) => st.pfNo === show.pfNo)) continue;
-        // New showtime appeared — add to watch
-        let seatAvailable: number | undefined;
-        let seatSold: number | undefined;
-        if (show.status !== "G") {
-          try {
-            const html = await fetchSeatPage(show, watch.theater, watch.showDay);
-            const count = parseSeatCount(html);
-            seatAvailable = count.available;
-            seatSold = count.sold;
-          } catch {
-            // Non-fatal
-          }
-        }
-        const newSt: ShowtimeState = {
-          pfNo: show.pfNo,
-          showingStart: show.showingStart,
-          showingEnd: show.showingEnd,
-          screenCode: show.screenCode,
-          screenName: show.screenName,
-          allSeatNum: show.allSeatNum,
-          lastStatus: show.status,
-          lastSeatAvailable: seatAvailable,
-          lastSeatSold: seatSold,
-        };
-        newShowtimes.push(newSt);
-        watchChanged = true;
-        console.log(`[monitor] new showtime: ${watch.movieTitle} ${show.pfNo}`);
-        await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-          chatId: watch.chatId,
-          text: `🆕 新增场次\n🎬 ${watch.movieTitle}\n${fmtDate(watch.showDay)} ${show.showingStart}～${show.showingEnd} ${show.screenName}\n${STATUS_LABEL[show.status] ?? show.status}`,
-          disableWebPagePreview: true,
-        });
-      }
-
-      if (watchChanged) {
-        watch.showtimes = newShowtimes;
-        // Edit the monitor message with updated statuses
-        try {
-          await editMessageText(env.TELEGRAM_BOT_TOKEN, {
-            chatId: watch.chatId,
-            messageId: watch.messageId,
-            text: renderWatchText(watch),
-            disableWebPagePreview: true,
-          });
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          if (!msg.includes("message is not modified")) {
-            console.error(`[monitor] edit failed for msg ${watch.messageId}: ${msg}`);
-          }
-        }
-        changed = true;
-      }
-    }
-  }
-
-  if (changed) await saveWatches(env.TOHO_STATE, watches);
-}
-
-// Notify on status transitions:
-// - G→A (opening): new message — the key event the user subscribed for
-// - A→B: silent edit only (monitor message already edited, no push notification)
-// - B→C, C→D: new message — user needs to be interrupted (残席わずか / 満席)
-// - D→non-D (満席解放): new message — seats released, valuable signal
-async function notifyStatusChange(env: Env, watch: Watch, st: ShowtimeState, show: TohoShow, prevStatus: string): Promise<void> {
-  const newStatus = show.status;
-  // Opening: G → anything non-G
-  if (prevStatus === "G" && newStatus !== "G") {
-    const seatLine = st.lastSeatAvailable !== undefined && st.lastSeatSold !== undefined
-      ? `\n空席 ${st.lastSeatAvailable} / ${st.lastSeatAvailable + st.lastSeatSold}席`
-      : "";
-    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-      chatId: watch.chatId,
-      text: `🎫 开票了！\n🎬 ${watch.movieTitle}\n${fmtDate(watch.showDay)} ${st.showingStart}～${st.showingEnd} ${st.screenName}\n${STATUS_LABEL[newStatus] ?? newStatus}${seatLine}`,
-      disableWebPagePreview: true,
-    });
-    return;
-  }
-  // Selling out: →C (残席わずか) or →D (満席)
-  if (newStatus === "C" || newStatus === "D") {
-    const seatLine = st.lastSeatAvailable !== undefined && st.lastSeatSold !== undefined
-      ? `\n空席 ${st.lastSeatAvailable} / ${st.lastSeatAvailable + st.lastSeatSold}席`
-      : "";
-    const icon = newStatus === "D" ? "🔴" : "🟡";
-    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-      chatId: watch.chatId,
-      text: `${icon} ${newStatus === "D" ? "満席" : "残席わずか"}\n🎬 ${watch.movieTitle}\n${fmtDate(watch.showDay)} ${st.showingStart}～${st.showingEnd} ${st.screenName}\n${STATUS_LABEL[newStatus] ?? newStatus}${seatLine}`,
-      disableWebPagePreview: true,
-    });
-    return;
-  }
-  // 満席解放: D → non-D (seats released after temporary hold)
-  if (prevStatus === "D" && newStatus !== "D" && newStatus !== "G") {
-    const seatLine = st.lastSeatAvailable !== undefined && st.lastSeatSold !== undefined
-      ? `\n空席 ${st.lastSeatAvailable} / ${st.lastSeatAvailable + st.lastSeatSold}席`
-      : "";
-    await sendMessage(env.TELEGRAM_BOT_TOKEN, {
-      chatId: watch.chatId,
-      text: `🟢 満席解放（座位释放）\n🎬 ${watch.movieTitle}\n${fmtDate(watch.showDay)} ${st.showingStart}～${st.showingEnd} ${st.screenName}\n${STATUS_LABEL[newStatus] ?? newStatus}${seatLine}`,
-      disableWebPagePreview: true,
-    });
-    return;
-  }
-  // A→B and other transitions: silent edit only (monitor message already updated)
-}
-
 // --- HTTP handlers ---
-
-function isAuthorized(req: Request, env: Env): boolean {
-  if (!env.TOHO_ADMIN_SECRET) return false;
-  return req.headers.get("x-toho-secret") === env.TOHO_ADMIN_SECRET;
-}
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/") {
-      return Response.json({ name: "toho-ticket-bot", cron: CRON });
+      return Response.json({ name: "toho-ticket-bot" });
     }
 
     if (req.method === "POST" && url.pathname === "/webhook") {
@@ -1707,27 +1125,6 @@ export default {
       }
     }
 
-    if (req.method === "POST" && url.pathname === "/run") {
-      if (!isAuthorized(req, env)) return new Response("forbidden", { status: 403 });
-      await runMonitor(env);
-      return Response.json({ ok: true });
-    }
-
     return new Response("not found", { status: 404 });
-  },
-
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(
-      runMonitor(env).catch((error) => {
-        console.error(`[cron] monitor failed: ${error}`);
-        if (env.TELEGRAM_CHAT_ID) {
-          sendMessage(env.TELEGRAM_BOT_TOKEN, {
-            chatId: env.TELEGRAM_CHAT_ID,
-            text: `⚠️ toho-ticket monitor error: ${error instanceof Error ? error.message : String(error)}`,
-            disableWebPagePreview: true,
-          }).catch(() => {});
-        }
-      }),
-    );
   },
 };

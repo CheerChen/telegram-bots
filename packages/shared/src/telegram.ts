@@ -169,6 +169,7 @@ export interface EditMessageMediaFileOptions {
   filename: string;
   caption?: string;
   parseMode?: ParseMode;
+  replyMarkup?: InlineKeyboardMarkup;
 }
 
 // Edit an existing photo message in-place, replacing its media.
@@ -187,6 +188,7 @@ export async function editMessageMediaFile(
   if (opts.parseMode) media.parse_mode = opts.parseMode;
   form.append("media", JSON.stringify(media));
   form.append("photo", new Blob([data], { type: "image/png" }), opts.filename);
+  if (opts.replyMarkup) form.append("reply_markup", JSON.stringify(opts.replyMarkup));
 
   const res = await fetch(`https://api.telegram.org/bot${token}/editMessageMedia`, {
     method: "POST",
@@ -206,6 +208,7 @@ export interface SendPhotoFileOptions {
   caption?: string;
   parseMode?: ParseMode;
   replyToMessageId?: number;
+  replyMarkup?: InlineKeyboardMarkup;
 }
 
 export async function sendPhotoFile(
@@ -220,6 +223,7 @@ export async function sendPhotoFile(
   if (opts.parseMode) form.append("parse_mode", opts.parseMode);
   if (opts.replyToMessageId !== undefined)
     form.append("reply_to_message_id", String(opts.replyToMessageId));
+  if (opts.replyMarkup) form.append("reply_markup", JSON.stringify(opts.replyMarkup));
 
   const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
     method: "POST",
