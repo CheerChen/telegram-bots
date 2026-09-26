@@ -16,9 +16,6 @@ Telegram bot for CN/EN word lookup into Japanese reading / Katakana output.
 `bots/katakana-line/`
 LINE version of the katakana lookup bot.
 
-`bots/ctxd/`
-Telegram bot that takes Slack links and returns summaries, translations, or draft replies. Also serves `/ilink` as the Q&A backend for clawbot.
-
 `bots/xvideo/`
 Telegram bot for X/Twitter and Weibo video extraction and delivery.
 
@@ -38,11 +35,14 @@ Scheduled Worker that posts the daily work check-in to Slack (weekdays 09:55 JST
 Scheduled Worker (daily, D1-backed) that manages domain-based Gmail labels: promotes busy domains, archives stale ones, wakes them on new mail, and eventually deletes them.
 
 `services/clawbot/`
-Long-running WeChat bridge service that connects ilink with the ctxd worker. Runs on the home Pi via Docker; deployed manually (`make release` in the service dir, then `docker compose pull && up -d` in the Pi stack dir).
+Long-running WeChat bridge service: multimodal LLM chat over ilink. No access to work tools. Runs on the home Pi via Docker; deployed manually (`make release` in the service dir, then `docker compose pull && up -d` in the Pi stack dir).
 
 ## Archives
 
 No longer deployed; kept for reference. Not part of the pnpm workspace.
+
+`archives/ctxd/`
+Telegram bot that summarized Slack / Jira / Confluence links. Retired: work-tool access stays on the local Mac `ctxd` CLI only, never in chat bots.
 
 `archives/herdbot/`
 Telegram agent bot that shelled out to the `ctxd` CLI and ran a Claude Agent SDK loop for multi-turn conversation.
