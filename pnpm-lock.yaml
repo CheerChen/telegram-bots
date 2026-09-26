@@ -51,6 +51,10 @@ importers:
         version: 4.90.0(@cloudflare/workers-types@4.20260511.1)
 
   bots/gmail-lifecycle:
+    dependencies:
+      shared:
+        specifier: workspace:*
+        version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251101.0

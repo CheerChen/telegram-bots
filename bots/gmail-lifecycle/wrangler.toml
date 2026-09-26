@@ -35,6 +35,8 @@ SCAN_MAX_MESSAGES = "500"
 #   GMAIL_CLIENT_SECRET    Google OAuth client secret
 #   GMAIL_REFRESH_TOKEN    refresh token (obtained via local auth helper)
 #   ADMIN_SECRET           gates /run, /migrate, /status
+#   TELEGRAM_BOT_TOKEN     optional; daily report / weekly heartbeat (src/report.ts)
+#   TELEGRAM_CHAT_ID       optional; chat that receives the report
 #
 # KV layout (GMAIL_STATE):
 #   gmail:refresh_token    current refresh token (Google does NOT rotate by default,

@@ -35,10 +35,14 @@ import {
   pruneScannedMessages,
   getAllDomains,
 } from "./lifecycle";
+import { reportCrash, reportCycle } from "./report";
 
 interface Env extends GmailEnv {
   DB: D1Database;
   ADMIN_SECRET?: string;
+  // Optional: without them the daily report is only logged (see report.ts).
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
   // vars
   LABEL_PREFIX?: string;
   ARCHIVE_PREFIX?: string;
@@ -51,7 +55,7 @@ interface Env extends GmailEnv {
 
 const CRON = "0 3 * * *";
 
-interface RunStats {
+export interface RunStats {
   scan: {
     listed: number;
     scanned: number;
@@ -238,18 +242,20 @@ export default {
     ctx.waitUntil(
       runCycle(env, cfg)
         .then(async (stats) => {
-          // Log summary; alert on errors.
-          const totalErrors = stats.errors.length;
-          if (totalErrors > 0) {
-            console.error(`[cron] completed with ${totalErrors} errors:\n${stats.errors.join("\n")}`);
+          if (stats.errors.length > 0) {
+            console.error(`[cron] completed with ${stats.errors.length} errors:\n${stats.errors.join("\n")}`);
           }
           console.log(
             `[cron] scan=${stats.scan.scanned} skipped=${stats.scan.skipped} wake=${stats.wake.woken.length} ` +
             `promote=${stats.promote.promoted.length} ` +
             `archive=${stats.evict.archived.length} delete=${stats.evict.deleted.length}`,
           );
+          await reportCycle(env, stats);
         })
-        .catch((error) => console.error(`[cron] cycle failed: ${error}`)),
+        .catch(async (error) => {
+          console.error(`[cron] cycle failed: ${error}`);
+          await reportCrash(env, error).catch((e) => console.error(`[cron] crash report failed: ${e}`));
+        }),
     );
   },
 };
