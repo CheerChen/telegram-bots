@@ -104,12 +104,19 @@ async function send(env: ReportEnv, text: string): Promise<void> {
   });
 }
 
-export async function reportCycle(env: ReportEnv, stats: RunStats, now = new Date()): Promise<void> {
+// forceHeartbeat: send the heartbeat on a quiet day regardless of weekday
+// (POST /run?report=1, for checking the Telegram wiring by hand).
+export async function reportCycle(
+  env: ReportEnv,
+  stats: RunStats,
+  now = new Date(),
+  forceHeartbeat = false,
+): Promise<void> {
   if (hasActivity(stats)) {
     await send(env, composeActivity(stats));
     return;
   }
-  if (now.getUTCDay() !== HEARTBEAT_UTC_DAY) {
+  if (!forceHeartbeat && now.getUTCDay() !== HEARTBEAT_UTC_DAY) {
     console.log("[report] quiet day; no message");
     return;
   }

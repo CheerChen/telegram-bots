@@ -13,6 +13,7 @@
 //                     window=30d      scan "in:inbox newer_than:30d" instead of 2d
 //                     max=2000        message IDs to list this invocation
 //                     pageToken=...   continue a paged scan (from the previous response)
+//                     report=1        also send the Telegram report (heartbeat if quiet)
 //                     Cold start = call /run?window=<PROMOTE_WINDOW_DAYS>d and follow
 //                     nextPageToken until it is null.
 //   POST /migrate   — one-time import of existing Domains/* labels into D1
@@ -213,6 +214,8 @@ export default {
       const pageToken = url.searchParams.get("pageToken");
       if (pageToken) scanOpts.pageToken = pageToken;
       const stats = await runCycle(env, cfg, scanOpts);
+      // report=1: also send the Telegram report, forcing a heartbeat on a quiet run.
+      if (url.searchParams.get("report") === "1") await reportCycle(env, stats, new Date(), true);
       return json(stats);
     }
 
