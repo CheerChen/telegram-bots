@@ -11,8 +11,9 @@ enabled = true
 crons = []
 
 [[kv_namespaces]]
+# Only caches the theater list (weekly TTL); safe to recreate if lost.
 binding = "TOHO_STATE"
-id = "3ff62b0d9fec481b9b65f50413cec4a4"
+id = "97ccac6a466841dcad170ba476e7ad3a"
 
 # Secrets (set via `pnpm secrets:push` after filling .dev.vars):
 #   TELEGRAM_BOT_TOKEN      — bot token from @BotFather
