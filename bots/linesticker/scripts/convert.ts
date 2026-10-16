@@ -38,23 +38,39 @@ export async function toStatic(input: string, output: string): Promise<Uint8Arra
 }
 
 // APNG frame delays vary, so derive length from the last frame's pts + duration.
-async function probeApng(input: string): Promise<{ seconds: number; frames: number }> {
+async function probeApng(input: string): Promise<{ seconds: number; delaysMs: number[] }> {
   const { stdout } = await run("ffprobe", [
     "-v", "error", "-f", "apng", "-show_entries", "frame=pts_time,duration_time",
     "-of", "csv=p=0", input,
   ]);
-  const rows = stdout.trim().split("\n").filter(Boolean);
-  const [pts, dur] = (rows.at(-1) ?? "").split(",").map(Number);
+  const rows = stdout.trim().split("\n").filter(Boolean).map((r) => r.split(",").map(Number));
+  const [pts, dur] = rows.at(-1) ?? [];
   const seconds = (pts ?? 0) + (dur ?? 0);
   if (!rows.length || !(seconds > 0)) throw new Error("apng probe failed");
-  return { seconds, frames: rows.length };
+  return { seconds, delaysMs: rows.map(([, d]) => Math.round((d ?? 0) * 1000)) };
+}
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
+}
+
+// Telegram clients play video stickers at the header frame rate and ignore
+// per-frame durations, so a VFR encode loses LINE's long holds. Emit CFR at
+// the delays' common tick (holds become repeated frames), capped at 30 fps.
+export function cfrRate(delaysMs: number[], speedup: number): string {
+  const tick = delaysMs.filter((d) => d > 0).reduce(gcd, 0);
+  if (speedup !== 1 || !tick || 1000 / tick > MAX_FPS) return String(MAX_FPS);
+  return `1000/${tick}`;
 }
 
 export async function toVideo(input: string, output: string): Promise<Uint8Array<ArrayBuffer>> {
-  const { seconds, frames } = await probeApng(input);
+  const { seconds, delaysMs } = await probeApng(input);
   const factor = seconds > MAX_SECONDS ? MAX_SECONDS / seconds : 1;
-  const filters = [`setpts=PTS*${factor.toFixed(4)}`, SCALE];
-  if (frames / (seconds * factor) > MAX_FPS) filters.push(`fps=${MAX_FPS}`);
+  const filters = [
+    `setpts=PTS*${factor.toFixed(4)}`,
+    `fps=${cfrRate(delaysMs, factor)}`,
+    SCALE,
+  ];
 
   for (const crf of CRF_STEPS) {
     await ffmpeg([
