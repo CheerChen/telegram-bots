@@ -1,0 +1,51 @@
+# Imports one LINE sticker pack into a Telegram sticker set. Dispatched by the
+# linesticker-bot Worker (workflow_dispatch, Actions:write PAT). GitHub-hosted
+# runner only; nothing persists here, Telegram holds the result.
+#
+# PUBLIC REPO: logs are world-readable. The script reads product_id from the
+# event file and masks it; never put inputs into step `env:` or `run:` text.
+#
+# Required repo secrets: LINESTICKER_BOT_TOKEN, LINESTICKER_OWNER_ID.
+name: LINE sticker import
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_id:
+        description: LINE sticker product id
+        required: true
+
+concurrency:
+  group: linesticker-import
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install ffmpeg
+        run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+      - run: pnpm install --frozen-lockfile --filter linesticker-bot... --filter telegram-bots
+      - name: Import
+        working-directory: bots/linesticker
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.LINESTICKER_BOT_TOKEN }}
+          TELEGRAM_OWNER_ID: ${{ secrets.LINESTICKER_OWNER_ID }}
+        run: pnpm run import
+      - name: Notify on setup failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.LINESTICKER_BOT_TOKEN }}
+          TELEGRAM_OWNER_ID: ${{ secrets.LINESTICKER_OWNER_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl -s -o /dev/null "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_OWNER_ID}" \
+            --data-urlencode "text=⚠️ linesticker import job failed: ${RUN_URL}"

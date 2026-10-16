@@ -1,0 +1,22 @@
+{
+  "name": "linesticker-bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "secrets:push": "wrangler secret bulk .dev.vars",
+    "import": "node --import tsx scripts/import.ts",
+    "test": "node --import tsx --test 'src/**/*.test.ts'",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json"
+  },
+  "dependencies": {
+    "shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251101.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}

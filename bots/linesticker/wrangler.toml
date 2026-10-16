@@ -1,0 +1,16 @@
+name = "linesticker-bot"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[observability]
+enabled = true
+
+[vars]
+GITHUB_REPO = "CheerChen/telegram-bots"
+IMPORT_WORKFLOW = "linesticker-import.yml"
+
+# Secrets (set via `pnpm secrets:push` after filling .dev.vars):
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_WEBHOOK_SECRET
+#   GITHUB_DISPATCH_TOKEN
+#   ALLOWED_CHAT_ID        your Telegram user id (also the sticker-set owner)

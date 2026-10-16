@@ -1,0 +1,12 @@
+# The bot formerly used by ctxd-bot (same BotFather token).
+TELEGRAM_BOT_TOKEN=
+
+# Any random string; also passed as secret_token to setWebhook.
+TELEGRAM_WEBHOOK_SECRET=
+
+# GitHub → Settings → Developer settings → Fine-grained token
+# Repository access: only this repo. Permissions: Actions = Read and write.
+GITHUB_DISPATCH_TOKEN=
+
+# Your Telegram user id. Only this chat may use the bot.
+ALLOWED_CHAT_ID=
