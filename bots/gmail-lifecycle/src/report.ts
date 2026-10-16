@@ -1,7 +1,8 @@
 // Telegram reporting for the daily cron: the only signal that the lifecycle is
 // actually running, since label moves alone are easy to miss.
 //
-//   - A day with label changes, failures or errors → one summary message.
+//   - A day with label changes, failures, errors or orphan filters → one
+//     summary message.
 //   - A quiet day → nothing, except on HEARTBEAT_UTC_DAY, when a short
 //     "still alive" message is sent. A missing weekly heartbeat means the
 //     cron itself stopped firing.
@@ -36,6 +37,7 @@ function hasActivity(stats: RunStats): boolean {
     stats.wake.failed.length > 0 ||
     stats.promote.failed.length > 0 ||
     stats.evict.failed.length > 0 ||
+    stats.orphanFilters.length > 0 ||
     stats.errors.length > 0
   );
 }
@@ -80,6 +82,7 @@ function composeActivity(stats: RunStats): string {
     listLine("🗑", "删除", stats.evict.deleted),
     listLine("⏳", "推迟新建", stats.promote.deferred),
     listLine("❌", "失败", failed),
+    listLine("🕳", "孤儿 filter（跳过收件箱但无标签，需手动删除）", stats.orphanFilters),
   ].filter((l): l is string => l !== null);
   if (stats.errors.length) {
     lines.push(`❗ 错误 (${stats.errors.length})：`);

@@ -7,6 +7,7 @@
 //   4. Evict: stale active domains -> archive (after confirming the label has
 //      no recent mail), stale archived -> delete
 //   5. Prune old daily counts
+//   6. Report orphan filters (inbox skipped, label gone; see orphans.ts)
 //
 // Manual routes (gated by ADMIN_SECRET):
 //   POST /run       — run the full cycle immediately. Optional query params:
@@ -37,6 +38,7 @@ import {
   getAllDomains,
 } from "./lifecycle";
 import { reportCrash, reportCycle } from "./report";
+import { findOrphanFilters } from "./orphans";
 
 interface Env extends GmailEnv {
   DB: D1Database;
@@ -69,6 +71,7 @@ export interface RunStats {
   wake: { woken: string[]; failed: string[] };
   promote: { promoted: string[]; failed: string[]; deferred: string[] };
   evict: { refreshed: string[]; archived: string[]; deleted: string[]; failed: string[] };
+  orphanFilters: string[];
   errors: string[];
 }
 
@@ -78,6 +81,7 @@ async function runCycle(env: Env, cfg: LifecycleConfig, scanOpts: ScanOptions = 
     wake: { woken: [], failed: [] },
     promote: { promoted: [], failed: [], deferred: [] },
     evict: { refreshed: [], archived: [], deleted: [], failed: [] },
+    orphanFilters: [],
     errors: [],
   };
 
@@ -152,6 +156,13 @@ async function runCycle(env: Env, cfg: LifecycleConfig, scanOpts: ScanOptions = 
     await pruneScannedMessages(env.DB, cfg.promoteWindowDays);
   } catch (e) {
     stats.errors.push(`prune: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Phase 6: Report filters left skipping the inbox after their label was deleted.
+  try {
+    stats.orphanFilters = await findOrphanFilters(env);
+  } catch (e) {
+    stats.errors.push(`orphan filters: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return stats;
