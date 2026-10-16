@@ -16,12 +16,14 @@ type ParserName =
   | "mizuki"
   | "kotoko"
   | "twice"
-  | "wordpress";
+  | "wordpress"
+  | "wpapi";
 
 interface SourceBase {
   name: string;
   parser: ParserName;
   titleIncludes?: string;
+  titleExcludes?: string;
 }
 
 interface JvcSource extends SourceBase {
@@ -31,13 +33,19 @@ interface JvcSource extends SourceBase {
   label?: string;
 }
 
-interface UrlSource<T extends Exclude<ParserName, "jvc" | "mizuki">> extends SourceBase {
+interface UrlSource<T extends Exclude<ParserName, "jvc" | "mizuki" | "wpapi">> extends SourceBase {
   parser: T;
   url: string;
 }
 
 interface MizukiSource extends SourceBase {
   parser: "mizuki";
+  url: string;
+  apiUrl: string;
+}
+
+interface WpApiSource extends SourceBase {
+  parser: "wpapi";
   url: string;
   apiUrl: string;
 }
@@ -50,7 +58,8 @@ type Source =
   | MizukiSource
   | UrlSource<"kotoko">
   | UrlSource<"twice">
-  | UrlSource<"wordpress">;
+  | UrlSource<"wordpress">
+  | WpApiSource;
 
 interface Item {
   id: string;
@@ -84,7 +93,13 @@ const MAX_SEEN_IDS = 500;
 
 const SOURCES: Source[] = [
   { name: "坂本真綾", parser: "jvc", kind: "artist", id: "A008957" },
-  { name: "YENA", parser: "jvc", kind: "artist", id: "A029411" },
+  {
+    name: "YENA",
+    parser: "wpapi",
+    url: "https://choiyena.jp/info/",
+    apiUrl: "https://choiyena.jp/wp-json/wp/v2/info?per_page=20&_fields=id,date,link,title",
+    titleExcludes: "FC限定",
+  },
   { name: "マクロスF", parser: "jvc", kind: "series", id: "Z0221", label: "flyingdog" },
   { name: "RYTHEM", parser: "rythem", url: "https://www.rythem.jp/info" },
   { name: "牧野由依", parser: "yuiyui", url: "https://www.yuiyuimakino.com/news/index.php" },
@@ -332,6 +347,27 @@ async function parseWordpress(source: UrlSource<"wordpress">): Promise<Item[]> {
     .filter((item): item is Item => item !== null);
 }
 
+async function parseWpApi(source: WpApiSource): Promise<Item[]> {
+  const raw = (await fetchJson(source.apiUrl)) as Array<{
+    link?: string;
+    date?: string;
+    title?: { rendered?: string };
+  }>;
+  return (Array.isArray(raw) ? raw : [])
+    .map((row) => {
+      const link = (row.link ?? "").trim();
+      const title = normalizeTitle(load(row.title?.rendered ?? "").text());
+      if (!link || !title) return null;
+      return {
+        id: link,
+        title,
+        url: link,
+        publishedAt: (row.date ?? "").trim(),
+      } satisfies Item;
+    })
+    .filter((item): item is Item => item !== null);
+}
+
 async function parseTwice(source: UrlSource<"twice">): Promise<Item[]> {
   const $ = load(await fetchText(source.url));
   return $("ul.newsList > li")
@@ -369,13 +405,19 @@ async function parseSource(source: Source): Promise<Item[]> {
       return parseTwice(source);
     case "wordpress":
       return parseWordpress(source);
+    case "wpapi":
+      return parseWpApi(source);
   }
 }
 
 function applyTitleFilter(source: Source, items: Item[]): Item[] {
-  const keyword = source.titleIncludes?.toLowerCase();
-  if (!keyword) return items;
-  return items.filter((item) => item.title.toLowerCase().includes(keyword));
+  const include = source.titleIncludes?.toLowerCase();
+  const exclude = source.titleExcludes?.toLowerCase();
+  if (!include && !exclude) return items;
+  return items.filter((item) => {
+    const title = item.title.toLowerCase();
+    return (!include || title.includes(include)) && (!exclude || !title.includes(exclude));
+  });
 }
 
 async function notify(env: Env, sourceName: string, item: Item): Promise<void> {
