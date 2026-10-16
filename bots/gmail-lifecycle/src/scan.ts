@@ -1,7 +1,7 @@
 // Inbox scanner.
 //
 // Lists inbox messages in a time window, fetches their From header via the
-// Gmail batch endpoint (50 messages per subrequest), aggregates per sender
+// Gmail batch endpoint (20 messages per subrequest), aggregates per sender
 // domain, and commits the result to D1 in one batch. Detects:
 //   - archived domains with new mail -> wake candidates
 //   - untracked domains whose window count meets the threshold -> promote

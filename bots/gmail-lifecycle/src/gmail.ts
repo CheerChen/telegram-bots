@@ -282,28 +282,62 @@ export async function getMessage(
   return gmailJson<GmailMessage>(env, `/users/me/messages/${id}?${params}`);
 }
 
-// Google caps a batch at 100 calls and recommends <= 50 to stay clear of the
-// per-user rate limit (messages.get costs 5 quota units, 250 units/s allowed).
-export const BATCH_GET_MAX = 50;
+// Google caps a batch at 100 calls, but the parts run concurrently and Gmail
+// also caps concurrent requests per user: 50 per batch got ~40% of parts
+// rejected with 429 "Too many concurrent requests for user". 20 keeps a
+// 500-message scan at ~25 subrequests on the Free plan's 50.
+export const BATCH_GET_MAX = 20;
+
+// Parts throttled with 429 are re-sent in a smaller batch after a backoff.
+const BATCH_GET_RETRIES = 2;
+const BATCH_GET_BACKOFF_MS = 1000;
 
 /**
- * Fetch metadata for many messages with ONE HTTP request via the Gmail batch
- * endpoint. Counts as a single Worker subrequest no matter how many IDs are
- * packed in, which is what lets a scan cover hundreds of messages on the
- * Free plan (50 subrequests per invocation).
+ * Fetch metadata for many messages via the Gmail batch endpoint. Each round is
+ * a single Worker subrequest no matter how many IDs are packed in, which is
+ * what lets a scan cover hundreds of messages on the Free plan (50
+ * subrequests per invocation).
  *
- * Messages whose inner response is not 200 are omitted from `messages`; the
- * failure is reported in `errors` and the caller may retry them later.
+ * Parts rejected with 429 are retried up to BATCH_GET_RETRIES times. Messages
+ * that still fail are omitted from `messages`; the failure is reported in
+ * `errors` and the caller may retry them later.
  */
 export async function batchGetMessages(
   env: GmailEnv,
   ids: string[],
   metadataHeaders: string[] = ["From", "Date"],
 ): Promise<{ messages: GmailMessage[]; errors: string[] }> {
-  if (ids.length === 0) return { messages: [], errors: [] };
   if (ids.length > BATCH_GET_MAX) {
     throw new Error(`batchGetMessages: ${ids.length} ids exceeds BATCH_GET_MAX=${BATCH_GET_MAX}`);
   }
+  const messages: GmailMessage[] = [];
+  const errors: string[] = [];
+  let pending = ids;
+  for (let attempt = 0; ; attempt++) {
+    const round = await batchGetOnce(env, pending, metadataHeaders);
+    messages.push(...round.messages);
+    errors.push(...round.errors);
+    if (round.throttled.length === 0) break;
+    if (attempt >= BATCH_GET_RETRIES) {
+      errors.push(...round.throttled.map((t) => t.error));
+      break;
+    }
+    pending = round.throttled.map((t) => t.id);
+    await new Promise((r) => setTimeout(r, BATCH_GET_BACKOFF_MS * 2 ** attempt));
+  }
+  return { messages, errors };
+}
+
+async function batchGetOnce(
+  env: GmailEnv,
+  ids: string[],
+  metadataHeaders: string[],
+): Promise<{
+  messages: GmailMessage[];
+  errors: string[];
+  throttled: Array<{ id: string; error: string }>;
+}> {
+  if (ids.length === 0) return { messages: [], errors: [], throttled: [] };
 
   const params = new URLSearchParams();
   params.set("format", "metadata");
@@ -340,6 +374,7 @@ export async function batchGetMessages(
 
   const messages: GmailMessage[] = [];
   const errors: string[] = [];
+  const throttled: Array<{ id: string; error: string }> = [];
   for (const rawPart of text.split(`--${boundaryMatch[2]}`)) {
     const part = rawPart.trim();
     if (!part || part === "--") continue;
@@ -359,6 +394,10 @@ export async function batchGetMessages(
     const idx = part.match(/Content-ID:\s*<response-(\d+)>/i)?.[1];
     const id = idx !== undefined ? ids[parseInt(idx, 10)] : "?";
 
+    if (status === 429 && id !== undefined && id !== "?") {
+      throttled.push({ id, error: `batch get ${id}: 429 after ${BATCH_GET_RETRIES} retries` });
+      continue;
+    }
     if (status !== 200) {
       errors.push(`batch get ${id}: ${status} ${json.slice(0, 200)}`);
       continue;
@@ -369,7 +408,7 @@ export async function batchGetMessages(
       errors.push(`batch get ${id}: bad JSON (${e instanceof Error ? e.message : String(e)})`);
     }
   }
-  return { messages, errors };
+  return { messages, errors, throttled };
 }
 
 export async function batchModify(
