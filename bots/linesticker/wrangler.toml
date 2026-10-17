@@ -2,6 +2,12 @@ name = "linesticker-bot"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
+# Browser-side omggif for the /wx page, served verbatim (src/vendor/*.js.txt).
+[[rules]]
+type = "Text"
+globs = ["**/*.txt"]
+fallthrough = false
+
 [observability]
 enabled = true
 

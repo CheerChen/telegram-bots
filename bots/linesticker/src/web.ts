@@ -6,11 +6,13 @@
 //   POST /wx/request        clawbot (x-claw-secret): {text} -> {reply}
 //   GET  /wx/<id>           page: grid when ready, auto-refreshing otherwise
 //   GET  /wx/<id>/<i>       one image
+//   GET  /wx/omggif.js      GIF decoder for the page (MIT, vendored)
 //   PUT  /wx/<id>/<i>       import job (x-import-secret): image bytes
 //   PUT  /wx/<id>           import job: {status, count} progress / result
 import { escapeHtml } from "shared/telegram";
 import { fetchMeta, isAnimated, parseProductId, pickTitle } from "./line.ts";
 import { SET_MAX } from "./stickers.ts";
+import OMGGIF from "./vendor/omggif-1.0.10.js.txt";
 
 export interface WebEnv {
   WEB: KVNamespace;
@@ -89,7 +91,9 @@ body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
 h1 { font-size: 17px; margin: 0 0 4px; }
 p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
-.grid img { width: 100%; aspect-ratio: 1; object-fit: contain; background: var(--tile); border-radius: 8px; }
+.t { position: relative; aspect-ratio: 1; background: var(--tile); border-radius: 8px; overflow: hidden; }
+.t img, .t canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.t.playing img { opacity: 0; }
 `;
 
 function page(title: string, body: string, refresh = false): Response {
@@ -100,6 +104,40 @@ function page(title: string, body: string, refresh = false): Response {
     `<title>${escapeHtml(title)}</title><style>${PAGE_STYLE}</style></head><body>${body}</body></html>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
+
+// WeChat's iOS web view shows GIF <img> as a still, but JS and canvas run.
+// Each tile decodes its GIF onto a canvas and keeps the real GIF <img> on top
+// at opacity 0, so a long press still forwards the animated GIF itself.
+const PLAYER = `
+(function () {
+  function play(tile) {
+    var img = tile.querySelector("img");
+    fetch(img.src).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+      var g; try { g = new exports.GifReader(new Uint8Array(buf)); } catch (e) { return; }
+      var n = g.numFrames(); if (n < 2) return;
+      var cv = document.createElement("canvas"); cv.width = g.width; cv.height = g.height;
+      var ctx = cv.getContext("2d"), px = ctx.createImageData(g.width, g.height), k = 0;
+      tile.insertBefore(cv, img); tile.classList.add("playing");
+      (function step() {
+        var f = g.frameInfo(k);
+        if (k === 0) px.data.fill(0);
+        g.decodeAndBlitFrameRGBA(k, px.data); ctx.putImageData(px, 0, 0);
+        if (f.disposal === 2) {
+          for (var y = f.y; y < f.y + f.height; y++)
+            for (var x = f.x; x < f.x + f.width; x++) px.data[(y * g.width + x) * 4 + 3] = 0;
+        }
+        k = (k + 1) % n;
+        setTimeout(step, Math.max(20, (f.delay || 5) * 10));
+      })();
+    }).catch(function () {});
+  }
+  var tiles = document.querySelectorAll(".t");
+  if (!("IntersectionObserver" in window)) { tiles.forEach(play); return; }
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { io.unobserve(e.target); play(e.target); } });
+  }, { rootMargin: "200px" });
+  tiles.forEach(function (t) { io.observe(t); });
+})();`;
 
 function renderPack(id: string, pack: WebPack | null): Response {
   if (!pack) return page("未找到", `<h1>还没有转换过这个包</h1><p>在微信里把 LINE 链接发给 bot 即可开始转换。</p>`);
@@ -113,11 +151,14 @@ function renderPack(id: string, pack: WebPack | null): Response {
   const kind = pack.animated ? "动态" : "静态";
   const imgs = Array.from(
     { length: pack.count },
-    (_, i) => `<img src="/wx/${id}/${i}" loading="lazy" alt="">`,
+    (_, i) => `<div class="t"><img src="/wx/${id}/${i}" loading="lazy" alt=""></div>`,
   ).join("");
+  const player = pack.animated
+    ? `<script>var exports={};</script><script src="/wx/omggif.js"></script><script>${PLAYER}</script>`
+    : "";
   return page(
     pack.title,
-    `<h1>${title}</h1><p>${pack.count} 张${kind}贴纸 · 长按图片转发给朋友（页面里不会动，发出去会动）</p><div class="grid">${imgs}</div>`,
+    `<h1>${title}</h1><p>${pack.count} 张${kind}贴纸 · 长按图片转发给朋友</p><div class="grid">${imgs}</div>${player}`,
   );
 }
 
@@ -155,6 +196,11 @@ export async function handleWeb(
   dispatch: (productId: string) => Promise<void>,
 ): Promise<Response | null> {
   const url = new URL(req.url);
+  if (url.pathname === "/wx/omggif.js") {
+    return new Response(OMGGIF, {
+      headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=86400" },
+    });
+  }
   if (url.pathname === "/wx/request" && req.method === "POST") {
     if (req.headers.get("x-claw-secret") !== env.CLAW_SECRET) {
       return new Response("forbidden", { status: 403 });
