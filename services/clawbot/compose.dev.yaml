@@ -21,8 +21,8 @@ services:
       LLM_API_KEYS: "${LLM_API_KEYS:-}"
       LLM_API_BASE_URL: "${LLM_API_BASE_URL:-https://dashscope-intl.aliyuncs.com}"
       LLM_COMPAT_BASE_URL: "${LLM_COMPAT_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}"
-      WORKER_URL_CTXD: "${WORKER_URL_CTXD:-}"
-      CLAW_WORKER_SECRET: "${CLAW_WORKER_SECRET:-}"
+      LINESTICKER_URL: "${LINESTICKER_URL:-https://linesticker-bot.cheerchen37.workers.dev}"
+      LINESTICKER_SECRET: "${LINESTICKER_SECRET:-}"
     ports:
       - "${CLAW_HOST_PORT:-8765}:8080"
     volumes:

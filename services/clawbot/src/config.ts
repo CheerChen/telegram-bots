@@ -20,6 +20,9 @@ export interface ClawConfig {
   alertTelegramBotToken: string | undefined;
   alertTelegramChatId: string | undefined;
   uiUrl: string;
+  // linesticker-bot Worker; LINE sticker links bypass the LLM when both are set.
+  linestickerUrl: string | undefined;
+  linestickerSecret: string | undefined;
 }
 
 export function loadConfig(): ClawConfig {
@@ -46,5 +49,7 @@ export function loadConfig(): ClawConfig {
     alertTelegramBotToken: process.env.ALERT_TELEGRAM_BOT_TOKEN?.trim() || undefined,
     alertTelegramChatId: process.env.ALERT_TELEGRAM_CHAT_ID?.trim() || undefined,
     uiUrl: process.env.CLAW_UI_URL?.trim() || "http://pi:8765",
+    linestickerUrl: process.env.LINESTICKER_URL?.trim().replace(/\/+$/, "") || undefined,
+    linestickerSecret: process.env.LINESTICKER_SECRET?.trim() || undefined,
   };
 }

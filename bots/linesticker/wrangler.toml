@@ -9,8 +9,15 @@ enabled = true
 GITHUB_REPO = "CheerChen/telegram-bots"
 IMPORT_WORKFLOW = "linesticker-import.yml"
 
+# WeChat page images + per-pack status (src/web.ts).
+[[kv_namespaces]]
+binding = "WEB"
+id = "bc517c15b7e84978bd31a948bb92f8dc"
+
 # Secrets (set via `pnpm secrets:push` after filling .dev.vars):
 #   TELEGRAM_BOT_TOKEN
 #   TELEGRAM_WEBHOOK_SECRET
 #   GITHUB_DISPATCH_TOKEN
 #   ALLOWED_CHAT_ID        your Telegram user id (also the sticker-set owner)
+#   CLAW_SECRET            shared with clawbot; gates POST /wx/request
+#   IMPORT_SECRET          shared with the import workflow; gates PUT /wx/*

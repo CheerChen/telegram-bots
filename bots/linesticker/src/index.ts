@@ -10,8 +10,9 @@ import {
   stickerSetName,
 } from "./line.ts";
 import { addSetKeyboard, getBotUsername, getStickerSet, SET_MAX, sendSticker } from "./stickers.ts";
+import { handleWeb, type WebEnv } from "./web.ts";
 
-interface Env {
+interface Env extends WebEnv {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
   ALLOWED_CHAT_ID: string;
@@ -28,8 +29,14 @@ const INTRO =
 
 let botUsername: string | undefined;
 
-// The import job deletes the progress message before sending the result.
-async function dispatchImport(env: Env, productId: string, progressId: number): Promise<void> {
+type ImportInputs =
+  // The import job deletes the progress message before sending the result.
+  | { target: "telegram"; progressMessageId: number }
+  | { target: "wechat" };
+
+async function dispatchImport(env: Env, productId: string, inputs: ImportInputs): Promise<void> {
+  const workflowInputs: Record<string, string> = { product_id: productId, target: inputs.target };
+  if (inputs.target === "telegram") workflowInputs.progress_message_id = String(inputs.progressMessageId);
   const url = `https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${env.IMPORT_WORKFLOW}/dispatches`;
   const res = await fetch(url, {
     method: "POST",
@@ -39,7 +46,7 @@ async function dispatchImport(env: Env, productId: string, progressId: number): 
       "user-agent": "linesticker-bot",
       "x-github-api-version": "2022-11-28",
     },
-    body: JSON.stringify({ ref: "master", inputs: { product_id: productId, progress_message_id: String(progressId) } }),
+    body: JSON.stringify({ ref: "master", inputs: workflowInputs }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
@@ -94,7 +101,7 @@ async function handleText(env: Env, chatId: number, text: string): Promise<void>
       "通常需要 1–3 分钟。",
   });
   try {
-    await dispatchImport(env, productId, progressId);
+    await dispatchImport(env, productId, { target: "telegram", progressMessageId: progressId });
   } catch (e) {
     await deleteMessage(token, chatId, progressId).catch(() => {});
     throw e;
@@ -104,6 +111,8 @@ async function handleText(env: Env, chatId: number, text: string): Promise<void>
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
+    const web = await handleWeb(env, req, (id) => dispatchImport(env, id, { target: "wechat" }));
+    if (web) return web;
     if (req.method !== "POST" || url.pathname !== "/webhook") {
       return new Response("linesticker-bot", { status: 200 });
     }

@@ -10,3 +10,8 @@ GITHUB_DISPATCH_TOKEN=
 
 # Your Telegram user id. Only this chat may use the bot.
 ALLOWED_CHAT_ID=
+
+# Random strings. CLAW_SECRET is also LINESTICKER_SECRET in clawbot's .env;
+# IMPORT_SECRET is also the LINESTICKER_IMPORT_SECRET repo secret.
+CLAW_SECRET=
+IMPORT_SECRET=

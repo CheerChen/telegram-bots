@@ -13,7 +13,6 @@ COPY packages/shared/package.json packages/shared/
 COPY services/clawbot/package.json services/clawbot/
 COPY bots/katakana/package.json bots/katakana/
 COPY bots/xvideo/package.json bots/xvideo/
-COPY bots/ctxd/package.json bots/ctxd/
 RUN pnpm install --frozen-lockfile --filter clawbot...
 
 # --- runtime stage: only clawbot + ilink sources ---

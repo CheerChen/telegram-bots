@@ -9,6 +9,7 @@ import {
   maybeCaptureStructuredMessage,
   resetChatSession,
 } from "./handlers/chat.ts";
+import { isLineStickerLink, requestLineSticker } from "./handlers/linesticker.ts";
 import type { HandlerName } from "./state.ts";
 
 const LOG_TEXT_MAX = 80;
@@ -105,7 +106,32 @@ export async function routeMessage(
     return;
   }
 
+  if (ctx.config.linestickerUrl && isLineStickerLink(trimmed)) {
+    await handleLineSticker(ctx, fromUserId, trimmed, contextToken);
+    return;
+  }
+
   scheduleChatBatch(ctx, fromUserId, text, contextToken);
+}
+
+async function handleLineSticker(
+  ctx: RouterContext,
+  fromUserId: string,
+  text: string,
+  contextToken: string | undefined,
+): Promise<void> {
+  const t0 = Date.now();
+  try {
+    const reply = await requestLineSticker(ctx.config, text);
+    await sendText(ctx, fromUserId, reply, contextToken);
+    ctx.recordHandlerCall("linesticker", "ok", Date.now() - t0);
+    logLine("linesticker", fromUserId, text, "ok", Date.now() - t0);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    await sendText(ctx, fromUserId, `⚠️ 贴纸转换请求失败：${error}`, contextToken);
+    ctx.recordHandlerCall("linesticker", "error", Date.now() - t0, error);
+    logLine("linesticker", fromUserId, text, `error: ${error}`, Date.now() - t0);
+  }
 }
 
 async function sendText(

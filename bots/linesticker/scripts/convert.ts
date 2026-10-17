@@ -83,3 +83,21 @@ export async function toVideo(input: string, output: string): Promise<Uint8Array
   }
   throw new Error("video sticker over 256 KB at max crf");
 }
+
+// WeChat page: GIF keeps the APNG's own frame delays (GIF stores per-frame
+// delays natively), no length cap. Shrink until it fits WeChat's custom
+// sticker limit so a forwarded GIF can also be saved as a sticker.
+const GIF_MAX = 1024 * 1024;
+const GIF_SIDES = [240, 200, 160];
+
+export async function toGif(input: string, output: string): Promise<Uint8Array<ArrayBuffer>> {
+  for (const side of GIF_SIDES) {
+    const scale = `scale=${side}:${side}:force_original_aspect_ratio=decrease:flags=lanczos`;
+    const vf = `${scale},split[a][b];[a]palettegen=reserve_transparent=1:stats_mode=diff[p];` +
+      "[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle:alpha_threshold=128";
+    await ffmpeg(["-f", "apng", "-i", input, "-filter_complex", vf, "-loop", "0", output]);
+    const data = await readSized(output, GIF_MAX);
+    if (data) return data;
+  }
+  throw new Error("gif over 1 MB at smallest size");
+}

@@ -5,7 +5,8 @@
 # PUBLIC REPO: logs are world-readable. The script reads product_id from the
 # event file and masks it; never put inputs into step `env:` or `run:` text.
 #
-# Required repo secrets: LINESTICKER_BOT_TOKEN, LINESTICKER_OWNER_ID.
+# Required repo secrets: LINESTICKER_BOT_TOKEN, LINESTICKER_OWNER_ID,
+# LINESTICKER_IMPORT_SECRET (the Worker's IMPORT_SECRET, for the wechat target).
 name: LINE sticker import
 
 on:
@@ -14,6 +15,10 @@ on:
       product_id:
         description: LINE sticker product id
         required: true
+      target:
+        description: telegram (sticker set) or wechat (GIFs for the /wx page)
+        required: false
+        default: telegram
       progress_message_id:
         description: Worker's progress message, deleted before the result is sent
         required: false
@@ -42,6 +47,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.LINESTICKER_BOT_TOKEN }}
           TELEGRAM_OWNER_ID: ${{ secrets.LINESTICKER_OWNER_ID }}
+          LINESTICKER_URL: https://linesticker-bot.cheerchen37.workers.dev
+          LINESTICKER_IMPORT_SECRET: ${{ secrets.LINESTICKER_IMPORT_SECRET }}
         run: pnpm run import
       # The import script reports its own failures; this covers the steps before it.
       - name: Notify on setup failure

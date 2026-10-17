@@ -13,7 +13,7 @@ import { routeMessage, type RouterContext } from "./router.ts";
 
 export type ClawStatus = "auth-required" | "authing" | "running";
 export type AuthReason = "initial" | "expired" | "manual-reset";
-export type HandlerName = "chat";
+export type HandlerName = "chat" | "linesticker";
 
 export interface HandlerStats {
   configured: boolean;
@@ -59,6 +59,7 @@ export class ClawState {
   ) {
     this.handlerStats = {
       chat: { configured: this.isHandlerConfigured("chat"), invocations: 0 },
+      linesticker: { configured: this.isHandlerConfigured("linesticker"), invocations: 0 },
     };
   }
 
@@ -89,6 +90,9 @@ export class ClawState {
   private isHandlerConfigured(name: HandlerName): boolean {
     if (name === "chat") {
       return this.pool.isAvailable();
+    }
+    if (name === "linesticker") {
+      return Boolean(this.config.linestickerUrl && this.config.linestickerSecret);
     }
     return false;
   }
