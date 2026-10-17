@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { escapeHtml, sendMessage } from "shared/telegram";
+import { deleteMessage, escapeHtml, sendMessage } from "shared/telegram";
 import {
   addStickersUrl,
   androidStaticUrl,
@@ -28,25 +28,36 @@ import {
   createNewStickerSet,
   getBotUsername,
   getStickerSet,
+  SET_MAX,
   sendSticker,
   type StickerFile,
   TelegramError,
 } from "../src/stickers.ts";
 import { toStatic, toVideo } from "./convert.ts";
 
-// Telegram's cap for a regular sticker set.
-const SET_MAX = 120;
 const CONVERT_CONCURRENCY = 4;
 
-function readProductId(): string {
+interface Inputs {
+  productId: string;
+  // The Worker's "importing" message; deleted before the result is sent.
+  progressMessageId?: number;
+}
+
+function readInputs(): Inputs {
   const eventPath = process.env.GITHUB_EVENT_PATH;
-  const raw = eventPath
-    ? JSON.parse(readFileSync(eventPath, "utf8")).inputs?.product_id
-    : process.argv[2];
-  const id = String(raw ?? "").trim();
+  const inputs = eventPath
+    ? JSON.parse(readFileSync(eventPath, "utf8")).inputs ?? {}
+    : { product_id: process.argv[2] };
+  const id = String(inputs.product_id ?? "").trim();
   if (process.env.GITHUB_ACTIONS && id) console.log(`::add-mask::${id}`);
   if (!/^\d{1,12}$/.test(id)) throw new Error("product_id must be digits");
-  return id;
+  const progress = Number(inputs.progress_message_id);
+  return { productId: id, progressMessageId: Number.isInteger(progress) && progress > 0 ? progress : undefined };
+}
+
+async function dropProgress(token: string, owner: string, inputs: Inputs): Promise<void> {
+  if (!inputs.progressMessageId) return;
+  await deleteMessage(token, owner, inputs.progressMessageId).catch(() => {});
 }
 
 async function download(url: string, path: string): Promise<boolean> {
@@ -133,7 +144,8 @@ async function dryRun(meta: LineStickerMeta, outDir: string): Promise<void> {
   console.log(`dry run: ${converted.length} files in ${outDir}, max ${Math.max(...kb)} KB, ${fell} fell back`);
 }
 
-async function importPack(productId: string, meta: LineStickerMeta, token: string, owner: string) {
+async function importPack(inputs: Inputs, meta: LineStickerMeta, token: string, owner: string) {
+  const { productId } = inputs;
   const title = pickTitle(meta);
   const name = stickerSetName(productId, await getBotUsername(token));
   const total = Math.min(meta.stickers.length, SET_MAX);
@@ -163,20 +175,21 @@ async function importPack(productId: string, meta: LineStickerMeta, token: strin
   const set = await getStickerSet(token, name);
   const first = set?.stickers[0];
   if (!first) throw new Error("set missing after import");
+  await dropProgress(token, owner, inputs);
   await sendSticker(token, {
     chatId: owner,
     fileId: first.file_id,
     replyMarkup: addSetKeyboard(addStickersUrl(name), title, set.stickers.length),
   });
   const notes: string[] = [];
-  if (meta.stickers.length > SET_MAX) notes.push(`only the first ${SET_MAX} of ${meta.stickers.length} fit in one set`);
-  if (fellBack) notes.push(`${fellBack} animated stickers fell back to static`);
-  if (notes.length) await sendMessage(token, { chatId: owner, text: `ℹ️ ${notes.join("; ")}` });
+  if (meta.stickers.length > SET_MAX) notes.push(`一个贴纸集最多 ${SET_MAX} 张，只导入了前 ${SET_MAX} 张（共 ${meta.stickers.length} 张）`);
+  if (fellBack) notes.push(`${fellBack} 张动态贴纸转换失败，已改为静态`);
+  if (notes.length) await sendMessage(token, { chatId: owner, text: `ℹ️ ${notes.join("；")}` });
 }
 
 async function main(): Promise<void> {
-  const productId = readProductId();
-  const meta = await fetchMeta(productId);
+  const inputs = readInputs();
+  const meta = await fetchMeta(inputs.productId);
   if (!meta) throw new Error("pack not found on LINE CDN");
 
   const dryDir = process.env.DRY_RUN_DIR;
@@ -186,12 +199,13 @@ async function main(): Promise<void> {
   const owner = process.env.TELEGRAM_OWNER_ID;
   if (!token || !owner) throw new Error("TELEGRAM_BOT_TOKEN / TELEGRAM_OWNER_ID not set");
   try {
-    await importPack(productId, meta, token, owner);
+    await importPack(inputs, meta, token, owner);
   } catch (e) {
+    await dropProgress(token, owner, inputs);
     await sendMessage(token, {
       chatId: owner,
       parseMode: "HTML",
-      text: `⚠️ Import failed for <b>${escapeHtml(pickTitle(meta))}</b>: ${escapeHtml(String(e).slice(0, 500))}\nSend the link again to resume.`,
+      text: `⚠️ <b>${escapeHtml(pickTitle(meta))}</b> 导入失败：${escapeHtml(String(e).slice(0, 500))}\n重新发送链接即可从中断处继续。`,
     }).catch(() => {});
     throw e;
   }

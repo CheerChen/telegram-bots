@@ -1,5 +1,5 @@
 import { isAllowedChat, verifyWebhookSecret } from "shared/auth";
-import { escapeHtml, sendMessage } from "shared/telegram";
+import { deleteMessage, escapeHtml, sendMessage } from "shared/telegram";
 import type { TelegramUpdate } from "shared/types";
 import {
   addStickersUrl,
@@ -9,7 +9,7 @@ import {
   pickTitle,
   stickerSetName,
 } from "./line.ts";
-import { addSetKeyboard, getBotUsername, getStickerSet, sendSticker } from "./stickers.ts";
+import { addSetKeyboard, getBotUsername, getStickerSet, SET_MAX, sendSticker } from "./stickers.ts";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -22,12 +22,14 @@ interface Env {
 }
 
 const INTRO =
-  "Send me a LINE sticker store link and I'll turn the pack into a Telegram sticker set.\n\n" +
-  "Example: https://store.line.me/stickershop/product/8525/ja";
+  "发一个 LINE 贴纸商店链接，我会把整个包转成 Telegram 贴纸集，动态贴纸保留动画。\n\n" +
+  "例：https://store.line.me/stickershop/product/8525/ja\n" +
+  "也支持分享链接（line.me/S/sticker/…）和商品 ID。";
 
 let botUsername: string | undefined;
 
-async function dispatchImport(env: Env, productId: string): Promise<void> {
+// The import job deletes the progress message before sending the result.
+async function dispatchImport(env: Env, productId: string, progressId: number): Promise<void> {
   const url = `https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${env.IMPORT_WORKFLOW}/dispatches`;
   const res = await fetch(url, {
     method: "POST",
@@ -37,7 +39,7 @@ async function dispatchImport(env: Env, productId: string): Promise<void> {
       "user-agent": "linesticker-bot",
       "x-github-api-version": "2022-11-28",
     },
-    body: JSON.stringify({ ref: "master", inputs: { product_id: productId } }),
+    body: JSON.stringify({ ref: "master", inputs: { product_id: productId, progress_message_id: String(progressId) } }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
@@ -55,19 +57,19 @@ async function handleText(env: Env, chatId: number, text: string): Promise<void>
   const productId = parseProductId(text);
   if (!productId) {
     const hint = /line\.me\/(emojishop|themeshop)/.test(text)
-      ? "Only sticker packs are supported (not emoji or themes)."
-      : "Send a LINE sticker store link.";
+      ? "只支持贴纸包，不支持表情（emoji）和主题。"
+      : "请发一个 LINE 贴纸商店链接。";
     await sendMessage(token, { chatId, text: hint });
     return;
   }
 
   const meta = await fetchMeta(productId);
   if (!meta) {
-    await sendMessage(token, { chatId, text: `No LINE sticker pack ${productId}.` });
+    await sendMessage(token, { chatId, text: `找不到 LINE 贴纸包 ${productId}。` });
     return;
   }
   const title = pickTitle(meta);
-  const total = meta.stickers.length;
+  const total = Math.min(meta.stickers.length, SET_MAX);
 
   botUsername ??= await getBotUsername(token);
   const name = stickerSetName(productId, botUsername);
@@ -82,16 +84,21 @@ async function handleText(env: Env, chatId: number, text: string): Promise<void>
     return;
   }
 
-  await dispatchImport(env, productId);
-  const kind = isAnimated(meta) ? "animated" : "static";
-  const progress = set ? ` (resuming at ${set.stickers.length})` : "";
-  await sendMessage(token, {
+  const kind = isAnimated(meta) ? "动态" : "静态";
+  const resume = set ? `（从第 ${set.stickers.length + 1} 张继续）` : "";
+  const progressId = await sendMessage(token, {
     chatId,
     parseMode: "HTML",
     text:
-      `⏳ Importing <b>${escapeHtml(title)}</b>: ${total} ${kind} stickers${progress}.\n` +
-      "Usually done in 1–3 minutes.",
+      `⏳ 正在导入 <b>${escapeHtml(title)}</b>：${total} 张${kind}贴纸${resume}\n` +
+      "通常需要 1–3 分钟。",
   });
+  try {
+    await dispatchImport(env, productId, progressId);
+  } catch (e) {
+    await deleteMessage(token, chatId, progressId).catch(() => {});
+    throw e;
+  }
 }
 
 export default {
@@ -118,7 +125,7 @@ export default {
         console.error("linesticker handler failed", err);
         await sendMessage(env.TELEGRAM_BOT_TOKEN, {
           chatId,
-          text: `⚠️ ${String(err).slice(0, 500)}`,
+          text: `⚠️ 出错了：${String(err).slice(0, 500)}`,
         }).catch(() => {});
       }),
     );

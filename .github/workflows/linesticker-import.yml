@@ -14,6 +14,9 @@ on:
       product_id:
         description: LINE sticker product id
         required: true
+      progress_message_id:
+        description: Worker's progress message, deleted before the result is sent
+        required: false
 
 concurrency:
   group: linesticker-import
@@ -34,13 +37,15 @@ jobs:
         run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
       - run: pnpm install --frozen-lockfile --filter linesticker-bot... --filter telegram-bots
       - name: Import
+        id: import
         working-directory: bots/linesticker
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.LINESTICKER_BOT_TOKEN }}
           TELEGRAM_OWNER_ID: ${{ secrets.LINESTICKER_OWNER_ID }}
         run: pnpm run import
+      # The import script reports its own failures; this covers the steps before it.
       - name: Notify on setup failure
-        if: failure()
+        if: failure() && steps.import.outcome != 'failure'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.LINESTICKER_BOT_TOKEN }}
           TELEGRAM_OWNER_ID: ${{ secrets.LINESTICKER_OWNER_ID }}
@@ -48,4 +53,4 @@ jobs:
         run: |
           curl -s -o /dev/null "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_OWNER_ID}" \
-            --data-urlencode "text=⚠️ linesticker import job failed: ${RUN_URL}"
+            --data-urlencode "text=⚠️ 贴纸导入任务失败：${RUN_URL}"

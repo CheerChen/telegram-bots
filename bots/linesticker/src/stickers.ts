@@ -86,6 +86,9 @@ function attach(form: FormData, key: string, file: StickerFile): Record<string, 
   return { sticker: `attach://${key}`, format: file.format, emoji_list: DEFAULT_EMOJI };
 }
 
+// Telegram's cap for a regular sticker set.
+export const SET_MAX = 120;
+
 // createNewStickerSet takes 1..50 stickers in one call.
 export const CREATE_BATCH_MAX = 50;
 
