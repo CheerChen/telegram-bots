@@ -46,6 +46,8 @@ function pageUrl(origin: string, id: string): string {
 }
 
 // Returns the reply text for clawbot. `dispatch` starts the wechat import.
+// ilink messages can't be edited, so the reply never states progress: it reads
+// as done, and the page itself shows conversion state until it is.
 async function handleRequest(
   env: WebEnv,
   origin: string,
@@ -59,23 +61,23 @@ async function handleRequest(
 
   const title = pickTitle(meta);
   const url = pageUrl(origin, id);
+  const total = Math.min(meta.stickers.length, SET_MAX);
+  const reply = `${title}（${total} 张）\n${url}\n\n长按图片即可转发。`;
   const pack = await getPack(env, id);
-  if (pack?.status === "ready") {
-    return `${title}（${pack.total} 张）\n${url}\n\n打开后长按图片转发即可。`;
-  }
+  if (pack?.status === "ready") return reply;
   const running = pack?.status === "pending" && Date.now() - pack.requestedAt < PENDING_STALE_MS;
   if (!running) {
     await dispatch(id);
     await putPack(env, id, {
       title,
-      total: Math.min(meta.stickers.length, SET_MAX),
+      total,
       animated: isAnimated(meta),
       status: "pending",
       count: pack?.count ?? 0,
       requestedAt: Date.now(),
     });
   }
-  return `⏳ 正在转换 ${title}，通常需要 1–3 分钟。\n${url}\n\n页面会自动刷新，完成后长按图片转发即可。`;
+  return reply;
 }
 
 const PAGE_STYLE = `
