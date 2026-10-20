@@ -5,6 +5,10 @@ import { parseProductId, pickTitle, stickerSetName } from "./line.ts";
 
 test("parseProductId accepts store, share and bare ids", () => {
   assert.equal(parseProductId("https://store.line.me/stickershop/product/8525/ja"), "8525");
+  assert.equal(
+    parseProductId("https://store.line.me/officialaccount/event/sticker/19101/ja"),
+    "19101",
+  );
   assert.equal(parseProductId("look https://line.me/S/sticker/11537/?lang=ja&ref=lsh"), "11537");
   assert.equal(parseProductId(" 8525 "), "8525");
   assert.equal(parseProductId("https://store.line.me/emojishop/product/5ac1bfd5040ab15980c9b435/ja"), null);

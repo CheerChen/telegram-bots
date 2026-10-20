@@ -11,6 +11,7 @@ export interface LineStickerMeta {
 
 const PRODUCT_PATTERNS = [
   /store\.line\.me\/stickershop\/product\/(\d+)/,
+  /store\.line\.me\/(?:officialaccount\/event|event)\/sticker\/(\d+)/,
   /line\.me\/S\/sticker\/(\d+)/,
 ];
 
