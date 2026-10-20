@@ -2,7 +2,8 @@
 // conversion and the reply text; clawbot only relays (see bots/linesticker/src/web.ts).
 import type { ClawConfig } from "../config.ts";
 
-const LINE_STICKER_LINK = /(store\.line\.me\/stickershop\/product\/\d+|line\.me\/S\/sticker\/\d+)/;
+const LINE_STICKER_LINK =
+  /(store\.line\.me\/stickershop\/product\/\d+|store\.line\.me\/(?:officialaccount\/event|event)\/sticker\/\d+|line\.me\/S\/sticker\/\d+)/;
 
 export function isLineStickerLink(text: string): boolean {
   return LINE_STICKER_LINK.test(text);
