@@ -37,12 +37,20 @@ export function androidStaticUrl(stickerId: number): string {
   return `${CDN}/sticker/${stickerId}/android/sticker.png`;
 }
 
-export function animationUrl(stickerId: number): string {
-  return `${CDN}/sticker/${stickerId}/iPhone/sticker_animation@2x.png`; // pg-allow: CDN retina suffix, not an email
+// POPUP / POPUP_SOUND packs have hasAnimation false; their animation is a
+// self-contained APNG (character included) in sticker_popup.png, no @2x.
+function isPopup(meta: LineStickerMeta): boolean {
+  return meta.stickerResourceType?.startsWith("POPUP") === true;
+}
+
+export function animationUrl(meta: LineStickerMeta, stickerId: number): string {
+  return isPopup(meta)
+    ? `${CDN}/sticker/${stickerId}/iPhone/sticker_popup.png`
+    : `${CDN}/sticker/${stickerId}/iPhone/sticker_animation@2x.png`; // pg-allow: CDN retina suffix, not an email
 }
 
 export function isAnimated(meta: LineStickerMeta): boolean {
-  return meta.hasAnimation === true;
+  return meta.hasAnimation === true || isPopup(meta);
 }
 
 export async function fetchMeta(productId: string): Promise<LineStickerMeta | null> {

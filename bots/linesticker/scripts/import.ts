@@ -92,11 +92,12 @@ async function convertOne(
   dir: string,
   stickerId: number,
   index: number,
-  animated: boolean,
+  animUrl: string | null,
   target: Target,
 ): Promise<Converted> {
   const base = join(dir, String(index));
-  if (animated && (await download(animationUrl(stickerId), `${base}.apng`))) {
+  const animated = animUrl !== null;
+  if (animUrl && (await download(animUrl, `${base}.apng`))) {
     try {
       return target === "telegram"
         ? { mime: "video/webm", data: await toVideo(`${base}.apng`, `${base}.webm`), fellBack: false }
@@ -130,7 +131,8 @@ async function convertAll(
   async function worker(): Promise<void> {
     while (next < to) {
       const i = next++;
-      out[i - from] = await convertOne(dir, meta.stickers[i]!.id, i, animated, target);
+      const id = meta.stickers[i]!.id;
+      out[i - from] = await convertOne(dir, id, i, animated ? animationUrl(meta, id) : null, target);
     }
   }
   await Promise.all(Array.from({ length: CONVERT_CONCURRENCY }, worker));
