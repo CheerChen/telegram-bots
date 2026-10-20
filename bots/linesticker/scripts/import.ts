@@ -33,7 +33,7 @@ import {
   type StickerFile,
   TelegramError,
 } from "../src/stickers.ts";
-import { toGif, toStatic, toVideo } from "./convert.ts";
+import { toGif, toStatic, toStaticGif, toVideo } from "./convert.ts";
 
 const CONVERT_CONCURRENCY = 4;
 
@@ -112,9 +112,9 @@ async function convertOne(
   if (isCgbi(await readFile(src)) && !(await download(androidStaticUrl(stickerId), src))) {
     throw new Error(`sticker #${index}: CgBI PNG and no android fallback`);
   }
-  // The web page shows LINE's own PNG; Telegram needs it at 512 px.
-  const data = target === "telegram" ? await toStatic(src, `${base}.png`) : new Uint8Array(await readFile(src));
-  return { mime: "image/png", data, fellBack: animated };
+  return target === "telegram"
+    ? { mime: "image/png", data: await toStatic(src, `${base}.png`), fellBack: animated }
+    : { mime: "image/gif", data: await toStaticGif(src, `${base}.gif`), fellBack: animated };
 }
 
 async function convertAll(

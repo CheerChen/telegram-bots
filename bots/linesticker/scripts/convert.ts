@@ -101,3 +101,14 @@ export async function toGif(input: string, output: string): Promise<Uint8Array<A
   }
   throw new Error("gif over 1 MB at smallest size");
 }
+
+// WeChat page, static sticker: a forwarded PNG is re-encoded as JPEG (white
+// background), a forwarded GIF is kept as a sticker with its transparency.
+// One frame at LINE's own size (~370 px) is far under GIF_MAX.
+export async function toStaticGif(input: string, output: string): Promise<Uint8Array<ArrayBuffer>> {
+  const vf = "split[a][b];[a]palettegen=reserve_transparent=1[p];[b][p]paletteuse=alpha_threshold=128";
+  await ffmpeg(["-i", input, "-frames:v", "1", "-filter_complex", vf, output]);
+  const data = await readSized(output, GIF_MAX);
+  if (!data) throw new Error("static gif over 1 MB");
+  return data;
+}

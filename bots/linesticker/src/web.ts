@@ -1,7 +1,8 @@
 // WeChat path: ilink has no sticker message, and WeChat shows GIF image
 // messages as stills. A forwarded GIF from the in-app browser does animate,
-// so WeChat users get a public page listing the pack as GIFs (static packs as
-// PNG). The import workflow converts and PUTs each image here; KV holds them.
+// so WeChat users get a public page listing the pack as GIFs (static stickers
+// too, so forwards keep transparency). The import workflow converts and PUTs
+// each image here; KV holds them.
 //
 //   POST /wx/request        clawbot (x-claw-secret): {text} -> {reply}
 //   GET  /wx/<id>           page: grid when ready, auto-refreshing otherwise
