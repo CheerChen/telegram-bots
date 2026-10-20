@@ -181,6 +181,7 @@ const PLAYER = `
   }, { rootMargin: "200px" });
   tiles.forEach(function (t) { io.observe(t); });
 })();`;
+const PLAYER_TAGS = `<script>var exports={};</script><script src="/wx/omggif.js"></script><script>${PLAYER}</script>`;
 
 const BACK = `<a class="back" href="/wx/">← 全部贴纸</a>`;
 
@@ -190,7 +191,12 @@ function renderHome(catalog: CatalogEntry[]): Response {
     `<a href="/wx/${e.id}"><div class="t"><img src="/wx/${e.id}/0" loading="lazy" alt=""></div>` +
     `<div class="cap">${escapeHtml(e.title)}<small>${e.count} 张${e.animated ? "动态" : "静态"}</small></div></a>`,
   ).join("");
-  return page("LINE 贴纸", `<h1>LINE 贴纸</h1><p>${catalog.length} 个包 · 点开后长按图片转发</p><div class="grid home">${cards}</div>`);
+  // Static covers are one frame; the player skips them after one cached fetch.
+  const player = catalog.some((e) => e.animated) ? PLAYER_TAGS : "";
+  return page(
+    "LINE 贴纸",
+    `<h1>LINE 贴纸</h1><p>${catalog.length} 个包 · 点开后长按图片转发</p><div class="grid home">${cards}</div>${player}`,
+  );
 }
 
 function renderPack(id: string, pack: WebPack | null): Response {
@@ -207,9 +213,7 @@ function renderPack(id: string, pack: WebPack | null): Response {
     { length: pack.count },
     (_, i) => `<div class="t"><img src="/wx/${id}/${i}" loading="lazy" alt=""></div>`,
   ).join("");
-  const player = pack.animated
-    ? `<script>var exports={};</script><script src="/wx/omggif.js"></script><script>${PLAYER}</script>`
-    : "";
+  const player = pack.animated ? PLAYER_TAGS : "";
   return page(
     pack.title,
     `${BACK}<h1>${title}</h1><p>${pack.count} 张${kind}贴纸 · 长按图片转发给朋友</p><div class="grid">${imgs}</div>${player}`,
