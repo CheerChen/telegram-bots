@@ -4,13 +4,18 @@
 // too, so forwards keep transparency). The import workflow converts and PUTs
 // each image here; KV holds them.
 //
+//   GET  /wx/               home: every ready pack, newest first
 //   POST /wx/request        clawbot (x-claw-secret): {text} -> {reply}
 //   GET  /wx/<id>           page: grid when ready, auto-refreshing otherwise
 //   GET  /wx/<id>/<i>       one image
 //   GET  /wx/omggif.js      GIF decoder for the page (MIT, vendored)
 //   PUT  /wx/<id>/<i>       import job (x-import-secret): image bytes
 //   PUT  /wx/<id>           import job: {status, count} progress / result
+//
+// Public but unlisted for search engines: every /wx response carries
+// X-Robots-Tag: noindex, and /robots.txt disallows /wx/.
 import { escapeHtml } from "shared/telegram";
+import { type CatalogEntry, upsertEntry } from "./catalog.ts";
 import { fetchMeta, isAnimated, parseProductId, pickTitle } from "./line.ts";
 import { SET_MAX } from "./stickers.ts";
 import OMGGIF from "./vendor/omggif-1.0.10.js.txt";
@@ -35,6 +40,8 @@ const PENDING_STALE_MS = 15 * 60_000;
 
 const packKey = (id: string) => `pack:${id}`;
 const imageKey = (id: string, i: number) => `img:${id}:${i}`;
+const CATALOG_KEY = "catalog";
+const NOINDEX = { "x-robots-tag": "noindex" };
 
 export async function getPack(env: WebEnv, id: string): Promise<WebPack | null> {
   return env.WEB.get<WebPack>(packKey(id), "json");
@@ -42,6 +49,36 @@ export async function getPack(env: WebEnv, id: string): Promise<WebPack | null> 
 
 async function putPack(env: WebEnv, id: string, pack: WebPack): Promise<void> {
   await env.WEB.put(packKey(id), JSON.stringify(pack));
+}
+
+const toEntry = (id: string, pack: WebPack, readyAt: number): CatalogEntry =>
+  ({ id, title: pack.title, animated: pack.animated, count: pack.count, readyAt });
+
+// Built once from the packs when the key is missing (first deploy, or the key
+// was deleted); afterwards kept current by addToCatalog.
+async function getCatalog(env: WebEnv): Promise<CatalogEntry[]> {
+  const stored = await env.WEB.get<CatalogEntry[]>(CATALOG_KEY, "json");
+  if (stored) return stored;
+  let catalog: CatalogEntry[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.WEB.list({ prefix: "pack:", cursor });
+    for (const { name } of page.keys) {
+      const id = name.slice("pack:".length);
+      const pack = await getPack(env, id);
+      if (pack?.status === "ready") catalog = upsertEntry(catalog, toEntry(id, pack, pack.requestedAt));
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  await env.WEB.put(CATALOG_KEY, JSON.stringify(catalog));
+  return catalog;
+}
+
+// Read-modify-write: two imports finishing in the same instant could drop one
+// entry; deleting the catalog key rebuilds it from the packs.
+async function addToCatalog(env: WebEnv, id: string, pack: WebPack): Promise<void> {
+  const catalog = await getCatalog(env);
+  await env.WEB.put(CATALOG_KEY, JSON.stringify(upsertEntry(catalog, toEntry(id, pack, Date.now()))));
 }
 
 function pageUrl(origin: string, id: string): string {
@@ -95,15 +132,20 @@ p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
 .t { position: relative; aspect-ratio: 1; background: var(--tile); border-radius: 8px; overflow: hidden; }
 .t img, .t canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .t.playing img { opacity: 0; }
+a { color: inherit; text-decoration: none; }
+.back { display: inline-block; margin-bottom: 8px; font-size: 13px; color: var(--muted); }
+.home { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+.cap { margin-top: 4px; font-size: 12px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap small { display: block; color: var(--muted); }
 `;
 
 function page(title: string, body: string, refresh = false): Response {
   const html =
     `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">` +
-    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">` +
     (refresh ? `<meta http-equiv="refresh" content="10">` : "") +
     `<title>${escapeHtml(title)}</title><style>${PAGE_STYLE}</style></head><body>${body}</body></html>`;
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", ...NOINDEX } });
 }
 
 // WeChat's iOS web view shows GIF <img> as a still, but JS and canvas run.
@@ -140,6 +182,17 @@ const PLAYER = `
   tiles.forEach(function (t) { io.observe(t); });
 })();`;
 
+const BACK = `<a class="back" href="/wx/">← 全部贴纸</a>`;
+
+function renderHome(catalog: CatalogEntry[]): Response {
+  if (!catalog.length) return page("LINE 贴纸", `<h1>LINE 贴纸</h1><p>还没有转换好的贴纸包。</p>`);
+  const cards = catalog.map((e) =>
+    `<a href="/wx/${e.id}"><div class="t"><img src="/wx/${e.id}/0" loading="lazy" alt=""></div>` +
+    `<div class="cap">${escapeHtml(e.title)}<small>${e.count} 张${e.animated ? "动态" : "静态"}</small></div></a>`,
+  ).join("");
+  return page("LINE 贴纸", `<h1>LINE 贴纸</h1><p>${catalog.length} 个包 · 点开后长按图片转发</p><div class="grid home">${cards}</div>`);
+}
+
 function renderPack(id: string, pack: WebPack | null): Response {
   if (!pack) return page("未找到", `<h1>还没有转换过这个包</h1><p>在微信里把 LINE 链接发给 bot 即可开始转换。</p>`);
   const title = escapeHtml(pack.title);
@@ -159,7 +212,7 @@ function renderPack(id: string, pack: WebPack | null): Response {
     : "";
   return page(
     pack.title,
-    `<h1>${title}</h1><p>${pack.count} 张${kind}贴纸 · 长按图片转发给朋友</p><div class="grid">${imgs}</div>${player}`,
+    `${BACK}<h1>${title}</h1><p>${pack.count} 张${kind}贴纸 · 长按图片转发给朋友</p><div class="grid">${imgs}</div>${player}`,
   );
 }
 
@@ -170,6 +223,7 @@ async function serveImage(env: WebEnv, id: string, i: number): Promise<Response>
     headers: {
       "content-type": metadata?.type ?? "image/gif",
       "cache-control": "public, max-age=31536000, immutable",
+      ...NOINDEX,
     },
   });
 }
@@ -186,17 +240,25 @@ async function handlePut(env: WebEnv, req: Request, id: string, index: string | 
   const pack = await getPack(env, id);
   if (!pack) return new Response("no pack", { status: 404 });
   const update = (await req.json()) as Partial<Pick<WebPack, "status" | "count">>;
-  await putPack(env, id, { ...pack, ...update });
+  const next = { ...pack, ...update };
+  await putPack(env, id, next);
+  if (update.status === "ready") await addToCatalog(env, id, next);
   return new Response("ok");
 }
 
-// Returns null when the path is not under /wx.
+// Returns null when the path is neither under /wx nor /robots.txt.
 export async function handleWeb(
   env: WebEnv,
   req: Request,
   dispatch: (productId: string) => Promise<void>,
 ): Promise<Response | null> {
   const url = new URL(req.url);
+  if (url.pathname === "/robots.txt") {
+    return new Response("User-agent: *\nDisallow: /wx/\n", { headers: { "content-type": "text/plain" } });
+  }
+  if ((url.pathname === "/wx" || url.pathname === "/wx/") && req.method === "GET") {
+    return renderHome(await getCatalog(env));
+  }
   if (url.pathname === "/wx/omggif.js") {
     return new Response(OMGGIF, {
       headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=86400" },
