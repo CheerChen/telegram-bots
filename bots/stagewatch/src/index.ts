@@ -6,6 +6,7 @@ interface Env {
   TELEGRAM_CHAT_ID: string;
   STAGEWATCH_ADMIN_SECRET?: string;
   STAGEWATCH_STATE: KVNamespace;
+  SELF: Fetcher;
 }
 
 type ParserName =
@@ -533,6 +534,18 @@ function parseRunOptions(req: Request): RunOptions {
   };
 }
 
+// Cron runs in whatever colo is idle (often outside Japan), and some sources
+// geo-block non-JP IPs. Placement only applies to fetch handlers, so the cron
+// calls its own /run through the SELF binding to run near [placement].region.
+async function runPlaced(env: Env): Promise<RunStats> {
+  const res = await env.SELF.fetch("https://self/run", {
+    method: "POST",
+    headers: { "x-stagewatch-secret": env.STAGEWATCH_ADMIN_SECRET ?? "" },
+  });
+  if (!res.ok) throw new Error(`placed /run ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 function isAuthorized(req: Request, env: Env): boolean {
   if (!env.STAGEWATCH_ADMIN_SECRET) return false;
   return req.headers.get("x-stagewatch-secret") === env.STAGEWATCH_ADMIN_SECRET;
@@ -560,7 +573,7 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      runMonitor(env)
+      runPlaced(env)
         .then(async (stats) => {
           // Surface broken sources: fetch/parse errors, notify failures, and
           // selectors that matched nothing. Quiet days don't alert.
@@ -574,7 +587,14 @@ export default {
             disableWebPagePreview: true,
           });
         })
-        .catch((error) => console.error(`[cron] run/alert failed: ${error}`)),
+        .catch(async (error) => {
+          console.error(`[cron] run/alert failed: ${error}`);
+          await sendMessage(env.TELEGRAM_BOT_TOKEN, {
+            chatId: env.TELEGRAM_CHAT_ID,
+            text: `⚠️ stagewatch: cron run failed: ${error}`,
+            disableWebPagePreview: true,
+          }).catch(() => {});
+        }),
     );
   },
 };

@@ -2,6 +2,15 @@ name = "stagewatch-bot"
 main = "src/index.ts"
 compatibility_date = "2026-06-16"
 
+# Run the fetch handler near Tokyo; sources such as choiyena.jp 403 non-JP IPs.
+[placement]
+region = "aws:ap-northeast-1"
+
+# The cron calls its own /run through this binding so the run is placed.
+[[services]]
+binding = "SELF"
+service = "stagewatch-bot"
+
 [observability]
 enabled = true
 
@@ -15,4 +24,4 @@ id = "f0ae6f7e73a24cf8b001e270ad36247c"
 # Secrets (set via `pnpm secrets:push` after filling .dev.vars):
 #   TELEGRAM_BOT_TOKEN
 #   TELEGRAM_CHAT_ID
-#   STAGEWATCH_ADMIN_SECRET   optional; enables POST /run
+#   STAGEWATCH_ADMIN_SECRET   required; guards POST /run, which the cron calls via SELF
