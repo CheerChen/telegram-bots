@@ -23,7 +23,7 @@ Telegram bot for X/Twitter and Weibo video extraction and delivery.
 LINE version of the X/Twitter video bot.
 
 `bots/linesticker/`
-Telegram bot that turns a LINE sticker store link into a Telegram sticker set. The Worker only parses the link and dispatches `.github/workflows/linesticker-import.yml`; the GitHub-hosted runner converts PNG / APNG with ffmpeg (static PNG / VP9 WEBM) and uploads straight to Telegram. No storage: the set name `line_<productId>_by_<bot>` is the dedup and resume state. Sets are public by name. WeChat has no sticker message and shows GIF image messages as stills, so clawbot relays LINE links to the Worker's `/wx` page instead: the same workflow (target `wechat`) writes GIFs to KV, and a GIF forwarded from that page animates in WeChat.
+LINE sticker packs for use outside LINE: a Telegram sticker set, or (via clawbot) a WeChat page of forwardable GIFs. The Worker only routes; conversion runs on GitHub Actions. See [bots/linesticker/README.md](bots/linesticker/README.md).
 
 `bots/stagewatch/`
 Scheduled Worker that watches artist and event news pages, deduplicates updates in KV, and pushes new items to Telegram.
@@ -38,7 +38,7 @@ Scheduled Worker that posts the daily work check-in to Slack (weekdays 09:55 JST
 Scheduled Worker (daily, D1-backed) that manages domain-based Gmail labels: promotes busy domains, archives stale ones, wakes them on new mail, and eventually deletes them.
 
 `services/clawbot/`
-Long-running WeChat bridge service: multimodal LLM chat over ilink. No access to work tools. Runs on the home Pi via Docker; deployed manually (`make release` in the service dir, then `docker compose pull && up -d` in the Pi stack dir).
+Long-running WeChat bridge service: multimodal LLM chat over ilink, plus relaying LINE sticker links to `bots/linesticker`. No access to work tools. Runs on the home Pi via Docker; deployed manually (`make release-sha` in the service dir, set `TAG=<sha>` in the Pi stack's `.env`, then `docker compose pull clawbot && docker compose up -d clawbot`).
 
 ## Archives
 
