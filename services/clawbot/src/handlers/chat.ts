@@ -5,8 +5,7 @@ import { join } from "node:path";
 import type { WeixinMessage } from "ilink/types";
 
 import type { ClawConfig } from "../config.ts";
-import type { ModelPool } from "../model-pool.ts";
-import { type ContentPart, type Message as LlmMessage } from "../llm.ts";
+import { chat, type ChatEnv, type ContentPart, type Message as LlmMessage } from "../llm.ts";
 
 const MAX_RECENT_MESSAGES = 12;
 const MAX_RECENT_CHARS = 16_000;
@@ -73,40 +72,36 @@ interface StoredSession {
   userId: string;
   summary?: string;
   messages: LlmMessage[];
-  model?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export async function handleChatMessage(
   config: ClawConfig,
-  pool: ModelPool,
   userId: string,
   text: string,
 ): Promise<ChatHandlerResult> {
-  if (!pool.isAvailable()) {
+  if (!config.llmApiKey) {
     return {
       ok: false,
-      messages: ["聊天能力未配置：模型池为空或全部不可用。"],
-      error: "llm pool empty",
+      messages: ["聊天能力未配置：缺少 LLM_API_KEY。"],
+      error: "llm not configured",
     };
   }
 
   const session = await loadSession(config, userId);
   session.messages.push({ role: "user", content: text.trim() });
-  await condenseSession(config, session, pool);
+  await condenseSession(config, session);
 
   try {
-    const result = await pool.chat(
-      buildPromptMessages(session),
-      { temperature: 0.3, maxTokens: 1200 },
-      session.model,
-    );
-    session.model = result.model;
-    session.messages.push({ role: "assistant", content: result.content });
-    await condenseSession(config, session, pool);
+    const reply = await chat(llmEnv(config, config.llmModel), buildPromptMessages(session), {
+      temperature: 0.3,
+      maxTokens: 1200,
+    });
+    session.messages.push({ role: "assistant", content: reply });
+    await condenseSession(config, session);
     await saveSession(config, session);
-    return { ok: true, messages: splitOutgoingMessages(result.content) };
+    return { ok: true, messages: splitOutgoingMessages(reply) };
   } catch (err) {
     session.messages.pop();
     await saveSession(config, session);
@@ -124,15 +119,14 @@ export async function resetChatSession(config: ClawConfig, userId: string): Prom
 
 export async function handleImageMessage(
   config: ClawConfig,
-  pool: ModelPool,
   userId: string,
   message: WeixinMessage,
 ): Promise<ChatHandlerResult> {
-  if (!pool.isAvailable()) {
+  if (!config.llmApiKey) {
     return {
       ok: false,
-      messages: ["聊天能力未配置：模型池为空或全部不可用。"],
-      error: "llm pool empty",
+      messages: ["聊天能力未配置：缺少 LLM_API_KEY。"],
+      error: "llm not configured",
     };
   }
 
@@ -150,9 +144,10 @@ export async function handleImageMessage(
     const session = await loadSession(config, userId);
     const imageNote = buildImageSessionNote(artifact);
     session.messages.push({ role: "user", content: imageNote });
-    await condenseSession(config, session, pool);
+    await condenseSession(config, session);
 
-    const result = await pool.chat(
+    const reply = await chat(
+      llmEnv(config, config.llmVisionModel),
       [
         ...buildPromptMessages(session),
         {
@@ -164,15 +159,13 @@ export async function handleImageMessage(
         temperature: 0.2,
         maxTokens: 1200,
       },
-      session.model,
     );
-    session.model = result.model;
-    session.messages.push({ role: "assistant", content: result.content });
-    await condenseSession(config, session, pool);
+    session.messages.push({ role: "assistant", content: reply });
+    await condenseSession(config, session);
     await saveSession(config, session);
     return {
       ok: true,
-      messages: splitOutgoingMessages(result.content),
+      messages: splitOutgoingMessages(reply),
     };
   } catch (err) {
     return {
@@ -213,6 +206,10 @@ export async function maybeCaptureStructuredMessage(
   return { id, reason, summary };
 }
 
+function llmEnv(config: ClawConfig, model: string): ChatEnv {
+  return { LLM_BASE_URL: config.llmBaseUrl, LLM_API_KEY: config.llmApiKey ?? "", LLM_MODEL: model };
+}
+
 function buildPromptMessages(session: StoredSession): LlmMessage[] {
   const system = session.summary?.trim()
     ? `${SYSTEM_PROMPT}
@@ -223,11 +220,7 @@ ${session.summary}`
   return [{ role: "system", content: system }, ...session.messages];
 }
 
-async function condenseSession(
-  config: ClawConfig,
-  session: StoredSession,
-  pool: ModelPool,
-): Promise<void> {
+async function condenseSession(config: ClawConfig, session: StoredSession): Promise<void> {
   if (session.messages.length <= MAX_RECENT_MESSAGES && totalChars(session.messages) <= MAX_RECENT_CHARS) {
     return;
   }
@@ -240,7 +233,8 @@ async function condenseSession(
     const content = old
       .map((m, i) => `${i + 1}. ${m.role === "user" ? "用户" : "助手"}：${m.content}`)
       .join("\n\n");
-    const summary = await pool.chat(
+    const summary = await chat(
+      llmEnv(config, config.llmModel),
       [
         { role: "system", content: MEMORY_SYSTEM_PROMPT },
         {
@@ -253,9 +247,8 @@ async function condenseSession(
         },
       ],
       { temperature: 0.1, maxTokens: 800 },
-      session.model,
     );
-    session.summary = truncateMemory(summary.content);
+    session.summary = truncateMemory(summary);
     session.messages = keep;
   } catch {
     session.summary = truncateMemory(buildFallbackSummary(session.summary, old));

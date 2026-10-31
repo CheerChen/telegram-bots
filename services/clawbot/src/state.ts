@@ -8,7 +8,6 @@ import type { LoginStatus, QRCodeResponse, TokenFile } from "ilink/types";
 
 import { notifyOwner } from "./alert.ts";
 import type { ClawConfig } from "./config.ts";
-import type { ModelPool } from "./model-pool.ts";
 import { routeMessage, type RouterContext } from "./router.ts";
 
 export type ClawStatus = "auth-required" | "authing" | "running";
@@ -53,10 +52,7 @@ export class ClawState {
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private handlerStats: Record<HandlerName, HandlerStats>;
 
-  constructor(
-    private readonly config: ClawConfig,
-    private readonly pool: ModelPool,
-  ) {
+  constructor(private readonly config: ClawConfig) {
     this.handlerStats = {
       chat: { configured: this.isHandlerConfigured("chat"), invocations: 0 },
       linesticker: { configured: this.isHandlerConfigured("linesticker"), invocations: 0 },
@@ -89,7 +85,7 @@ export class ClawState {
 
   private isHandlerConfigured(name: HandlerName): boolean {
     if (name === "chat") {
-      return this.pool.isAvailable();
+      return Boolean(this.config.llmApiKey);
     }
     if (name === "linesticker") {
       return Boolean(this.config.linestickerUrl && this.config.linestickerSecret);
@@ -213,7 +209,6 @@ export class ClawState {
     if (!this.token || !this.pollAbort) return;
     const ctx: RouterContext = {
       config: this.config,
-      pool: this.pool,
       baseUrl,
       token: this.token.bot_token,
       recordHandlerCall: (name, result, durationMs, error) =>

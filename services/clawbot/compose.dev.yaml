@@ -18,9 +18,10 @@ services:
       CLAW_DATA_DIR: /app/services/clawbot/data
       ILINK_BOT_TYPE: "${ILINK_BOT_TYPE:-3}"
       CLAW_BOT_AGENT: "${CLAW_BOT_AGENT:-clawbot-dev/0.1.0}"
-      LLM_API_KEYS: "${LLM_API_KEYS:-}"
-      LLM_API_BASE_URL: "${LLM_API_BASE_URL:-https://dashscope-intl.aliyuncs.com}"
-      LLM_COMPAT_BASE_URL: "${LLM_COMPAT_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}"
+      LLM_BASE_URL: "${LLM_BASE_URL:-http://192.168.0.110:3030/v1}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-free-llm}"
+      LLM_VISION_MODEL: "${LLM_VISION_MODEL:-free-vl}"
       LINESTICKER_URL: "${LINESTICKER_URL:-https://linesticker-bot.cheerchen37.workers.dev}"
       LINESTICKER_SECRET: "${LINESTICKER_SECRET:-}"
     ports:
